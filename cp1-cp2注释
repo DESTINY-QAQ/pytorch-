@@ -1,0 +1,170 @@
+# Cell: 简单输出示例
+print("hi")  # 打印字符串 "hi"，在 Python 3 中 print 是函数，必须有括号
+
+# Cell: 同上，使用单引号也可以
+print('hi')  # 打印 'hi'，单双引号等价
+
+# Cell: 幂运算
+10**2  # 10 的 2 次方 => 100，注意 ** 是幂运算符
+
+# Cell: 将 10 转为二进制字符串
+bin(10)  # 返回字符串 '0b1010'，前缀 '0b' 表示二进制
+
+# Cell: 将 28 转为十六进制字符串
+hex(28)  # 返回字符串 '0x1c'，前缀 '0x' 表示十六进制
+
+# Cell: 支持直接使用二进制文字再转 hex
+hex(0b11010)  # 0b11010 是二进制字面量，结果 '0x1a'
+
+# Cell: 自己实现十进制到二进制的转换（整数部分）
+def dec2bin(target):
+    amari = []                # 用于保存余数（从低位到高位）
+    while target != 0:
+        amari.append(target % 2)  # 取余得到当前最低位
+        target = target // 2      # 整除，注意：// 是整除（向下取整）
+    amari.reverse()           # 余数序列是从低位到高位，反转得到高->低
+    return amari
+
+dec2bin(26)  # 示例：26 -> [1,1,0,1,0]
+
+# Cell: 版本带注释（提示易错点）
+def dec2bin(target):
+    amari = []
+    while target != 0:
+        amari.append(target % 2)
+        target = target // 2  # 注意：/ 是浮点除法（返回 float），// 才是整除（返回 int）
+    amari.reverse()
+    return amari
+
+dec2bin(26)
+
+# Cell: 字符串转整数，指定基数
+int('0b11010', 2)  # 将以 '0b' 前缀的二进制字符串解析为十进制 => 26
+
+# Cell: Jupyter 魔法查看当前工作目录
+%pwd  # IPython / Jupyter magic，用于显示当前工作目录（仅在交互式环境有效）
+
+# Cell: 将十六进制字符串转为整数
+int('0x1a', 16)  # 指定基数 16 => 26
+
+# Cell: 通用进制转换函数（任意进制字符串 -> 十进制）
+def any2dec(target, m):
+    # 注意：变量名不要用内建函数名（如 sum）以免覆盖内建函数
+    n = len(target) - 1  # 指数，从最高位开始递减
+    total = 0
+    for i in range(len(target)):
+        # 处理十六进制的 A-F
+        ch = target[i].upper()  # 统一转大写，避免 'a'/'A' 问题
+        if ch == 'A':
+            num = 10
+        elif ch == 'B':
+            num = 11
+        elif ch == 'C':
+            num = 12
+        elif ch == 'D':
+            num = 13
+        elif ch == 'E':
+            num = 14
+        elif ch == 'F':
+            num = 15
+        else:
+            # 如果是数字字符，转为 int；若遇到非法字符会抛出 ValueError
+            num = int(ch)
+        total += (m ** n) * num
+        n -= 1
+    return total
+
+ans1 = any2dec('1A', 16)         # 1A(16) -> 26
+ans2 = any2dec('11111111', 2)    # 11111111(2) -> 255
+print(f"{ans1},{ans2}")
+
+# Cell: 演示变量赋值与访问
+a = 100
+b = -100
+a  # 返回 a 的值（在 notebook 中会显示）
+
+# Cell: 查看变量类型
+print(type(a))  # <class 'int'>
+print(type(b))  # <class 'int'>
+
+# Cell: bin 对负数的行为
+bin(-10)  # 返回字符串 '-0b1010'，负号在最前面——这不是二进制补码表示，只是带符号的字符串
+
+# Cell: 通过与掩码获得无符号 8 位表现形式（常用于查看二进制低 8 位）
+bin(-10 & 0xff)  # 先做按位与，获得 0-255 范围内的值，再转为二进制字符串 -> '0b11110110'
+
+# Cell: 扩展的整数与小数部分二进制转换示例
+def dec2bin_ex(target):
+    i = int(target)     # 整数部分
+    f = target - i      # 小数部分
+    a = []
+    while (i != 0):
+        a.append(i % 2)  # 向列表末尾添加当前位（低位先添加）
+        i = i // 2
+    a.reverse()          # 反转得到高位到低位的顺序
+    b = []
+    n = 0
+    while (f != 0):
+        temp = f * 2
+        b.append(int(temp))       # 取整得到当前小数位
+        f = temp - int(temp)      # 更新剩余小数部分
+        n += 1
+        if (n >= 10):             # 限制位数，避免无限循环或浮点精度问题
+            break
+    return a, b
+
+dec2bin_ex(10.625)  # 举例：10.625 -> 整数部分 [1,0,1,0], 小数部分 [1,0,1]
+
+# Cell: 除法示例 -- 注意 / vs //
+10/3    # 浮点除法，结果约为 3.3333333333333335
+10//3   # 整除（向下取整），结果为 3
+10%3    # 取余，结果为 1
+10**3   # 幂运算，10 的 3 次方 -> 1000
+
+# Cell: 位移操作
+12 << 1   # 左移一位，相当于乘以 2 => 24
+12 >> 2   # 右移两位，相当于 //4 => 3
+12 >> 3   # 右移三位 => 1
+
+# Cell: 对负数做位运算并掩码显示（常见技巧）
+bin(-12 & 0xff)  # 展示 -12 的 8 位二进制补码表示（字符串形式）
+
+# Cell: 右移与算术右移
+int(0b11110100) >> 2  # 先把二进制转整数，再右移两位
+-12 >> 2   # Python 中的右移对负数是算术右移（保留符号位） -> -3
+
+# Cell: 位与 (&) 与 逻辑与 (and) 的区别
+5 & 1   # 按位与，5(0101) & 1(0001) => 1
+5 & 2   # 5(0101) & 2(0010) => 0
+
+5 and 2  # 逻辑与运算，返回最后一个被评估的值：因为 5 为真，所以返回 2
+
+# Cell: 异或和按位取反
+2 ^ 5   # 按位异或 XOR，2(0010) ^ 5(0101) => 7
+~2      # 按位取反，结果为 -3（Python 使用无限长整数和二的补码规则）
+
+# Cell: 从一个 32 位整数中提取 RGB 分量
+def get_color(t):
+    a = (t & 0x00ff0000) >> 16  # 取红色通道：屏蔽并向右移16位
+    b = (t & 0x0000ff00) >> 8   # 取绿色通道
+    c = t & 0x000000ff          # 取蓝色通道
+    return a, b, c
+
+c = 4287090426
+r, g, b = get_color(c)
+print(r, g, b)  # 输出各通道数值
+
+# Cell: 逻辑或 (or) 返回第一个真值或最后一个值
+7 or 1  # 7 为真，直接返回 7（注意：or 并不总是返回布尔值）
+
+# Cell: 简单的条件判断并读取输入
+def score(s):
+    if (s >= 90):
+        print("very good")
+    elif (s >= 80) and (s < 90):
+        print("good")
+    else:
+        print("need work")
+
+sc = int(input())   # input() 返回 str，需用 int() 转成整数，否则与数值比较会出错
+score(sc)
