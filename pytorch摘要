@@ -1,0 +1,8 @@
+pytorch摘要
+
+OpenCV 的 imread 返回 BGR，直接用 plt.imshow 会颜色反转，需用 cv2.cvtColor 转为 RGB。
+np.savetxt / np.loadtxt 适合二维数值数组，保存高维数组或混合类型时会丢失信息或格式不一致。
+在使用 np.random 时若需可复现结果，必须在每次生成前或合适时机设置相同的 seed；但随机状态是全局的，频繁在代码中设置 seed 会影响随机性。
+softmax 的实现要注意 axis 与数值稳定性：通常对每个样本（行）独立计算，并在 exp 前减去最大值以防溢出。
+reshape 时指定维度必须能整除总元素个数，否则会出错；resize 会修改原数组（谨慎使用）。
+np.linspace 与 np.arange 的差异：linspace 包含端点，arange 用步长，浮点步长可能出现精度问题。
