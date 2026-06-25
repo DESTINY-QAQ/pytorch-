@@ -1,8 +1,340 @@
-pytorch摘要
+# pytorch-01-01-checkpoint 学习摘要
 
-OpenCV 的 imread 返回 BGR，直接用 plt.imshow 会颜色反转，需用 cv2.cvtColor 转为 RGB。
-np.savetxt / np.loadtxt 适合二维数值数组，保存高维数组或混合类型时会丢失信息或格式不一致。
-在使用 np.random 时若需可复现结果，必须在每次生成前或合适时机设置相同的 seed；但随机状态是全局的，频繁在代码中设置 seed 会影响随机性。
-softmax 的实现要注意 axis 与数值稳定性：通常对每个样本（行）独立计算，并在 exp 前减去最大值以防溢出。
-reshape 时指定维度必须能整除总元素个数，否则会出错；resize 会修改原数组（谨慎使用）。
-np.linspace 与 np.arange 的差异：linspace 包含端点，arange 用步长，浮点步长可能出现精度问题。
+> 对应远程仓库 `main` 分支下的 `pytorch-01-01-checkpoint.ipynb`（第 1 章 NumPy 基础）
+> 本文档对 notebook 中的核心代码进行解释，并补充常见易错点。
+
+---
+
+## 1.1 生成 NumPy 数组
+
+### 核心概念
+
+- **ndarray**：存储单一数据类型的多维数组。
+- **ufunc**：对数组逐元素运算的通用函数。
+- **轴（axis）**：维度编号；二维数组 shape `(行, 列)` 即 `(axis=0, axis=1)`。
+
+### 代码解释
+
+```python
+import numpy as np
+
+# 从 Python 列表创建一维 / 多维数组
+lst1 = [3.14, 2.17, 0, 1, 2]
+nd1 = np.array(lst1)          # 一维
+
+lst2 = [[3.14, 2.17, 0, 1, 2], [1, 2, 3, 4, 5]]
+nd2 = np.array(lst2)          # 二维，shape (2, 5)
+
+# 图像数字化示例
+import cv2
+from matplotlib import pyplot as plt
+img = cv2.imread('../data/car.jpg')   # 读入 BGR 格式，shape 如 (675, 1200, 3)
+plt.imshow(img)                       # 直接显示会偏色，见易错点
+print(img.ndim, img.shape, img.dtype) # 3, (H, W, 3), uint8
+```
+
+```python
+# 随机数组
+np.random.random((4, 4))              # [0, 1) 均匀分布
+np.random.randint(1, 50, size=(3, 3))   # [1, 50) 整数，左闭右开
+np.random.uniform(1, 2, size=(3, 3))    # [1, 2] 均匀分布
+np.random.randn(3, 3)                   # 标准正态 N(0,1)
+
+# 可复现随机数：每次生成前设相同 seed
+np.random.seed(12)
+a = np.random.randint(1, 5, (2, 2))
+np.random.seed(12)
+b = np.random.randint(1, 5, (2, 2))     # a 与 b 相同
+```
+
+```python
+# 特殊形状数组
+np.zeros([3, 3])       # 全 0
+np.ones([3, 3])        # 全 1
+np.eye(3)              # 单位矩阵
+np.diag([1, 2, 3])     # 对角矩阵
+np.zeros_like(nd5)     # 与 nd5 同 shape 的全 0 数组
+
+# 持久化（仅适合二维数值矩阵）
+np.savetxt('./test1.txt', nd9)
+nd10 = np.loadtxt('./test1.txt')
+
+# 等差序列
+np.arange(10)           # 0~9，步长 1
+np.arange(1, 4, 0.5)    # 支持小数步长
+np.linspace(0, 1, 10)   # 等分 10 份，默认含首尾端点
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **OpenCV BGR vs Matplotlib RGB** | `cv2.imread` 返回 BGR，直接用 `plt.imshow` 会红蓝颠倒。应使用 `cv2.cvtColor(img, cv2.COLOR_BGR2RGB)` 或 `plt.imshow(img[:, :, ::-1])`。 |
+| **`%matplotlib inline` 仅限 Jupyter** | 在 `.py` 脚本中写 `%matplotlib inline` 会 `SyntaxError`；脚本中改用 `plt.show()`。 |
+| **图片路径** | `cv2.imread` 路径错误时返回 `None`，后续 `plt.imshow(None)` 报错。应先判断 `img is not None`。 |
+| **`np.random` 的 seed 是全局的** | `seed` 影响之后所有随机调用；频繁在中间改 seed 会破坏随机序列的独立性。需要复现时，在生成前设一次即可。 |
+| **`randn` vs `rand` vs `normal`** | `randn` 是标准正态；`random`/`uniform` 是均匀分布；`normal(mu, sigma)` 才是指定均值方差的正态。不要混用。 |
+| **`np.empty` 不是全 0** | `empty` 分配未初始化内存，值是垃圾数；需要 0 请用 `zeros`。 |
+| **`savetxt` / `loadtxt` 局限** | 只适合二维数值数组；高维、混合类型、整数标签等会丢信息，高维请用 `np.save` / `np.load`。 |
+| **`linspace` vs `arange`** | `linspace` 按份数等分且默认含终点；`arange` 按步长递增且不含终点。浮点步长用 `arange` 可能出现 `0.1+0.2≠0.3` 类精度问题。 |
+| **notebook 中 arange/linspace 说明写反** | 原书 1.1.5 小节把两个函数的格式说明对调了：实际是 `arange(start, stop, step)`，`linspace(start, stop, num)`。 |
+
+---
+
+## 1.2 读取元素（索引与切片）
+
+### 代码解释
+
+```python
+nd11 = np.random.random([10])
+
+nd11[3]          # 第 4 个元素（从 0 起）
+nd11[3:6]        # 下标 3,4,5
+nd11[1:6:2]      # 步长 2：1,3,5
+nd11[::-2]       # 倒序每隔一个
+
+nd12 = np.arange(25).reshape([5, 5])
+nd12[1:3, 1:3]           # 子矩阵（行 1~2，列 1~2）
+nd12[(nd12 > 3) & (nd12 < 10)]  # 布尔索引，注意用 & 不是 and
+nd12[[1, 2]]             # 第 2、3 行
+nd12[:, 1:3]             # 第 2、3 列
+
+# 按概率抽样
+from numpy import random as nr
+a = np.arange(1, 25, dtype=float)
+c1 = nr.choice(a, size=(3, 4))              # 可重复
+c2 = nr.choice(a, size=(3, 4), replace=False) # 不重复，size 不能大于 len(a)
+c3 = nr.choice(a, size=(3, 4), p=a / np.sum(a))  # p 之和必须为 1
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **切片是视图，不是副本** | `nd12[1:3, 1:3]` 修改会影响原数组；需要副本用 `.copy()`。 |
+| **布尔索引用 `&`、`|`、`~`** | 不能写 `(nd12>3) and (nd12<10)`，会报错。多个条件要加括号。 |
+| **`choice` 的 `replace=False`** | 无放回抽样时，`size` 各维乘积不能超过 `a` 的长度。 |
+| **`p` 参数** | 概率数组长度须与 `a` 一致，且 `sum(p)==1`。 |
+| **负步长切片** | `nd11[::-1]` 倒序；`nd11[::-2]` 倒序跳一个。起始/终止下标在负步长时容易搞反。 |
+
+---
+
+## 1.3 算术运算
+
+### 1.3.1 逐元素乘法（Hadamard 积）
+
+```python
+A = np.array([[1, 2], [-1, 4]])
+B = np.array([[2, 0], [3, 4]])
+
+A * B              # 或 np.multiply(A, B)，对应位置相乘
+A * 2.0            # 标量广播：每个元素都乘 2
+```
+
+### 1.3.2 点积 / 矩阵乘法
+
+```python
+X1 = np.array([[1, 2], [3, 4]])       # (2, 2)
+X2 = np.array([[5, 6, 7], [8, 9, 10]]) # (2, 3)
+X3 = np.dot(X1, X2)                     # (2, 3)
+# 等价于 X1 @ X2
+```
+
+### 激活函数示例
+
+```python
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def relu(x):
+    return np.maximum(0, x)
+
+def softmax(x):
+    return np.exp(x) / np.sum(np.exp(x))  # 见易错点：缺 axis 与数值稳定
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **`*` 不是矩阵乘法** | `A * B` 是逐元素乘；矩阵乘用 `@` 或 `np.dot`。这是深度学习里最高频的错误之一。 |
+| **`dot` 维度要求** | `X1` 的列数必须等于 `X2` 的行数，即 `(m,k) @ (k,n) -> (m,n)`。 |
+| **softmax 要对正确轴计算** | notebook 中的 `softmax` 对整张数组求和，只适合一维。二维批量数据应对 `axis=1`（每行一个样本）计算，且应先 `x - x.max(axis=1, keepdims=True)` 防止 `exp` 溢出。 |
+| **sigmoid 溢出** | 对很大的负 `x`，`np.exp(-x)` 可能溢出；生产代码常用 `np.where(x>=0, ...)` 的稳定写法。 |
+| **标量运算的广播** | `A * 2.0` 会广播，但 `A * [1,2]` 需要形状可广播，否则报错。 |
+
+---
+
+## 1.4 数组变形
+
+### 代码解释
+
+```python
+arr = np.arange(10)
+
+arr.reshape(2, 5)      # 变为 2×5，不修改原 arr
+arr.reshape(5, -1)     # -1 表示自动推断该维大小
+arr.reshape(3, -1)     # 10 不能被 3 整除 → ValueError
+
+arr.resize(2, 5)       # 就地修改 arr 本身
+
+arr = np.arange(12).reshape(3, 4)
+arr.T                  # 转置 (4, 3)
+arr.ravel()            # 展平，默认 C 序（行优先），返回视图
+arr.ravel('F')         # Fortran 序（列优先）
+arr.flatten()          # 展平，返回副本
+
+arr = np.arange(3).reshape(3, 1)
+arr.squeeze()          # 去掉长度为 1 的轴 → shape (3,)
+
+arr2 = np.arange(24).reshape(2, 3, 4)
+arr2.transpose(1, 2, 0)  # 轴重排 → shape (3, 4, 2)
+```
+
+### 合并数组
+
+```python
+np.append(a, b)                    # 一维拼接
+np.append(a, b, axis=0)            # 按行（竖着叠）
+np.append(a, b, axis=1)            # 按列（横着拼）
+np.concatenate((a, b), axis=0)   # 推荐，内存更友好
+np.stack((a, b), axis=0)           # 新增加一个轴
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **`reshape` vs `resize`** | `reshape` 返回新视图（通常），不改变原变量指向的数据布局；`resize` 就地修改，且元素不够时会补 0。 |
+| **`-1` 只能有一个** | `reshape(2, -1, -1)` 非法；只能有一个维度写 `-1` 让 NumPy 自动推断。 |
+| **整除约束** | 元素总数必须等于各维乘积，如 `arange(10)` 不能 `reshape(3, -1)`。 |
+| **`ravel` vs `flatten`** | `ravel` 尽可能返回视图；`flatten` 一定返回副本。修改展平结果时行为不同。 |
+| **`append` 低效** | 每次 `append` 会分配新数组；循环里拼接请用 `list` 收集后一次 `np.array`，或 `np.concatenate`。 |
+| **`stack` vs `concatenate`** | `stack` 会新增维度；`concatenate` 在已有轴上拼接。两者对 shape 要求不同。 |
+| **`hstack` / `vstack` 说明易混** | 记忆：`vstack` 是 vertical，增加行（上下叠）；`hstack` 是 horizontal，增加列（左右拼）。 |
+| **`zip(a, b)` 只迭代一次** | notebook 中 `c=zip(a,b)` 用 `for` 打完后 `c` 已耗尽，再 `print(j)` 可能不是预期行为。 |
+
+---
+
+## 1.5 批量处理
+
+### 代码解释
+
+```python
+data_train = np.random.randn(10000, 2, 3)  # (样本数, 特征维...)
+np.random.shuffle(data_train)               # 就地打乱样本顺序
+
+batch_size = 100
+for i in range(0, len(data_train), batch_size):
+    batch = data_train[i : i + batch_size]  # shape (100, 2, 3)
+    x_batch_sum = np.sum(batch)
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **`shuffle` 打乱的是第 0 轴** | 默认只打乱样本维；若 shape 不是 `(N, ...)` 需先确认哪一维是 batch。 |
+| **最后一批可能不足 batch_size** | `i + batch_size` 可能超过 `len`，切片会自动变短，循环写法要能接受最后一批 < 100。 |
+| **先 shuffle 再划分** | 训练/验证集划分前应先打乱，否则按顺序切分会有偏差。 |
+
+---
+
+## 1.6 节省内存
+
+### 代码解释
+
+```python
+Y = np.random.randn(10, 2, 3)
+X = np.zeros_like(Y)
+
+id(X)      # 某地址
+X = X + Y  # 先算 X+Y 新数组，再让 X 指向新地址 → id 改变
+X += Y     # 就地加，id 不变
+X[:] = X + Y  # 写入原缓冲区，id 不变（但中间仍创建临时 X+Y）
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **`X = X + Y` 分配新内存** | 大数据训练时频繁使用会造成内存峰值和 GC 压力；能用 `X += Y` 或 `np.add(X, Y, out=X)` 更好。 |
+| **`X[:] = X + Y` 仍有临时数组** | 比 `X = X + Y` 好（不换引用），但 `X+Y` 仍会短暂分配；最优是 `np.add(X, Y, out=X)`。 |
+| **视图与副本** | 很多「省内存」技巧依赖是否就地修改；对需要梯度的 PyTorch 张量，后续章节还要区分 `in-place` 是否破坏计算图。 |
+
+---
+
+## 1.7 通用函数（ufunc）
+
+### 要点
+
+- ufunc 对数组**逐元素**运算，底层 C 实现，比 Python `for` 循环快得多。
+- `np.sin(x)` 可直接作用于向量；`math.sin` 只能处理标量。
+- 聚合函数（`sum`、`max`、`mean` 等）的 **`axis` 参数**：`axis=0` 沿行方向压扁（对列操作），`axis=1` 沿列方向压扁（对行操作）。
+
+### 性能对比（notebook 结论）
+
+- `numpy.sin` 比 `math.sin` 循环快 orders of magnitude。
+- `np.dot` 比 Python `for` 循环点积快约数百倍。
+- NumPy 不支持 GPU；大规模训练后续用 PyTorch。
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **`axis` 方向** | `arr.sum(axis=0)` 结果是「每一列的和」，shape 会去掉 axis=0 那一维；与「按行求和」容易搞反，可记 `axis` 指定的是**被消掉的轴**。 |
+| **`np.sum` vs `arr.sum`** | 功能类似；注意 `np.sum(a, axis=0)` 与 `a.sum(axis=0)`。 |
+| **末尾追加：list 快于 ndarray** | Python `list.append` 均摊 O(1)；`np.append` 每次复制 O(N)。动态增长用 list，定型后再 `np.array`。 |
+
+---
+
+## 1.8 广播机制
+
+### 四条规则（简化记忆）
+
+1. 各数组向**维度最多**的 shape 看齐，不足的在**前面**补 1。
+2. 输出 shape 为各维的**最大值**。
+3. 某维长度相同，或其中一方为 1，才可广播；否则报错。
+4. 长度为 1 的维：沿该维「复制」第一组值（逻辑复制，不一定真复制内存）。
+
+### 代码解释
+
+```python
+A = np.arange(0, 40, 10).reshape(4, 1)  # shape (4, 1)
+B = np.arange(0, 3)                      # shape (3,) → 视为 (1, 3)
+C = A + B                                # 广播为 (4, 3)
+```
+
+```
+A (4,1):  [[0], [10], [20], [30]]
+B (1,3):  [[0, 1, 2]]
+C (4,3):  每个元素 A[i,0] + B[0,j]
+```
+
+### 易错点
+
+| 易错点 | 说明 |
+|--------|------|
+| **`(3,)` 与 `(3,1)` 不同** | `(3,)` 是 1 维；`(3,1)` 是 2 维列向量。与 `(1,3)` 广播结果 shape 不同。 |
+| **不能任意广播** | 如 `(4,3)` 与 `(2,3)` 无法广播，不要假设 NumPy 会自动对齐。 |
+| **隐式广播导致意外 shape** | 写神经网络公式时，`(N,1)` 与 `(1,C)` 可得到 `(N,C)`，故意利用；否则可能是 bug。 |
+| **与 `dot` 的区别** | 广播用于逐元素运算；矩阵乘不满足广播规则，维度必须严格匹配。 |
+
+---
+
+## 速查：本章最高频错误 Top 10
+
+1. 把 `*` 当成矩阵乘法（应用 `@` / `dot`）。
+2. OpenCV 读图 BGR 未转 RGB 就 `imshow`。
+3. `softmax` 未指定 `axis`、未做减最大值稳定化。
+4. `reshape` 元素总数不能整除。
+5. 混淆 `reshape`（不改原数组）与 `resize`（就地改）。
+6. 切片是视图，改切片会改原数组。
+7. 布尔索引用了 `and` 而不是 `&`。
+8. `np.random.seed` 以为只影响下一行（实际影响全局后续随机状态）。
+9. `axis=0` / `axis=1` 在 `sum`、`max` 中方向搞反。
+10. 在 `.py` 文件里使用 Jupyter 魔法命令 `%matplotlib inline`。
+
+---
+
+*文档生成自 pytorch-01-01-checkpoint.ipynb，可与原 notebook 对照学习。*
