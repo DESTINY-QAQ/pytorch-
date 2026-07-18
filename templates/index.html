@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="基于 PyTorch CNN 的猫狗图像分类测试平台">
+  <title>PetVision · 猫狗图像识别平台</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('index') }}" aria-label="返回首页">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img"><path d="M12 17 8 8l11 5h10L40 8l-4 11c3 3 5 7 5 12 0 8-7 13-17 13S7 39 7 31c0-6 2-10 5-14Z"/><circle cx="18" cy="29" r="2"/><circle cx="30" cy="29" r="2"/><path d="M21 35h6"/></svg>
+        </span>
+        <span><strong>PetVision</strong><small>智能图像分类平台</small></span>
+      </a>
+      <div class="model-status {{ 'ready' if model_ready else 'offline' }}">
+        <span class="status-dot"></span>{{ '模型已就绪' if model_ready else '模型未加载' }}
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <span class="eyebrow">AI IMAGE CLASSIFICATION</span>
+          <h1>猫狗图像智能识别</h1>
+          <p>上传一张宠物图片，系统将基于训练完成的 CNN 模型分析图像，并返回分类结果与模型置信度。</p>
+        </div>
+        <div class="tech-pills" aria-label="技术信息">
+          <span>PyTorch</span><span>CNN</span><span>本地推理</span>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <article class="panel upload-panel">
+          <div class="panel-heading">
+            <div><span class="step">01</span><h2>上传测试图片</h2></div>
+            <span class="limit">最大 10 MB</span>
+          </div>
+
+          <form id="predict-form" method="post" enctype="multipart/form-data">
+            <label class="drop-zone" id="drop-zone" for="image-input">
+              <input id="image-input" type="file" name="image" accept="image/jpeg,image/png,image/bmp,image/webp" required>
+              <div id="empty-state" class="empty-state">
+                <span class="upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 14v5h14v-5"/></svg>
+                </span>
+                <strong>拖拽图片到这里</strong>
+                <span>或者点击选择本地文件</span>
+                <em>支持 JPG、PNG、BMP、WEBP</em>
+              </div>
+              <div id="client-preview" class="client-preview" hidden>
+                <img id="preview-image" alt="待识别图片预览">
+                <div><strong id="file-name"></strong><span id="file-size"></span></div>
+              </div>
+            </label>
+
+            <div class="form-actions">
+              <button type="button" id="reset-button" class="secondary-button" disabled>重新选择</button>
+              <button type="submit" id="submit-button" class="primary-button" disabled>
+                <span class="button-label">开始智能识别</span>
+                <span class="spinner" aria-hidden="true"></span>
+              </button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel result-panel">
+          <div class="panel-heading">
+            <div><span class="step">02</span><h2>模型分析结果</h2></div>
+          </div>
+
+          {% if error %}
+          <div class="message error-message" role="alert">
+            <span aria-hidden="true">!</span><div><strong>无法完成识别</strong><p>{{ error }}</p></div>
+          </div>
+          {% elif result %}
+          <div class="prediction">
+            <div class="result-image-wrap"><img src="{{ preview_url }}" alt="{{ filename }}"></div>
+            <div class="prediction-summary">
+              <span class="result-caption">识别结果</span>
+              <div class="class-row"><strong>{{ predicted_label }}</strong><span>{{ predicted_class }}</span></div>
+              <div class="confidence-row"><span>模型置信度</span><strong>{{ confidence_percent }}%</strong></div>
+              <div class="meter" role="progressbar" aria-valuenow="{{ confidence_percent }}" aria-valuemin="0" aria-valuemax="100">
+                <span style="width: {{ confidence_percent }}%"></span>
+              </div>
+              <p class="result-note">结果由模型推断生成，仅用于学习与演示。</p>
+            </div>
+          </div>
+          {% else %}
+          <div class="result-placeholder">
+            <span aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 19V9a2 2 0 0 1 2-2h2l1.5-2h5L16 7h2a2 2 0 0 1 2 2v10H4Z"/><circle cx="12" cy="13" r="3"/></svg>
+            </span>
+            <strong>等待图片分析</strong>
+            <p>完成上传后，分类结果和置信度将在这里显示。</p>
+          </div>
+          {% endif %}
+        </article>
+      </section>
+
+      <section class="info-strip">
+        <div><strong>2</strong><span>识别类别</span></div>
+        <div><strong>150 × 150</strong><span>模型输入尺寸</span></div>
+        <div><strong>本地</strong><span>图片处理方式</span></div>
+      </section>
+    </main>
+
+    <footer>PetVision · 基于 PyTorch 构建的猫狗图像识别演示平台</footer>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
