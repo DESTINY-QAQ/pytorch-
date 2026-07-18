@@ -278,4 +278,4 @@ if __name__ == "__main__":
     args = parse_args()
     if args.epochs < 1 or args.batch_size < 1 or args.num_workers < 0:
         raise ValueError("--epochs and --batch-size must be positive; --num-workers cannot be negative.")
-    train(Path.cwd(), args.epochs, args.batch_size, args.seed, args.data_dir, args.num_workers)
+    train(Path(__file__).resolve().parent, args.epochs, args.batch_size, args.seed, args.data_dir, args.num_workers)
