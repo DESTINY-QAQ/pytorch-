@@ -3,113 +3,318 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="基于 PyTorch CNN 的猫狗图像分类测试平台">
-  <title>PetVision · 猫狗图像识别平台</title>
+  <meta name="description" content="CNN、Transformer 与 YOLO11 科幻互动教学实验室">
+  <meta name="theme-color" content="#050914">
+  <title>机器学习展示 · 互动教学实验室</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='9' y='9' width='46' height='46' rx='14' transform='rotate(45 32 32)' fill='%23081425' stroke='%2338d9ff'/%3E%3Ccircle cx='24' cy='32' r='3' fill='%2338d9ff'/%3E%3Ccircle cx='32' cy='24' r='3' fill='%2338d9ff'/%3E%3Ccircle cx='40' cy='32' r='3' fill='%2338d9ff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
-<body>
-  <div class="page-shell">
+<body data-model-ready="{{ 'true' if model_ready else 'false' }}">
+  <canvas id="starfield" aria-hidden="true"></canvas>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="{{ url_for('index') }}" aria-label="返回首页">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 48 48" role="img"><path d="M12 17 8 8l11 5h10L40 8l-4 11c3 3 5 7 5 12 0 8-7 13-17 13S7 39 7 31c0-6 2-10 5-14Z"/><circle cx="18" cy="29" r="2"/><circle cx="30" cy="29" r="2"/><path d="M21 35h6"/></svg>
-        </span>
-        <span><strong>PetVision</strong><small>智能图像分类平台</small></span>
+      <a class="brand" href="#lab" aria-label="机器学习展示首页">
+        <span class="brand-core" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>机器学习展示</strong><small>MACHINE LEARNING VISUAL LAB</small></span>
       </a>
-      <div class="model-status {{ 'ready' if model_ready else 'offline' }}">
-        <span class="status-dot"></span>{{ '模型已就绪' if model_ready else '模型未加载' }}
+      <div class="system-status">
+        <span class="pulse-dot"></span>
+        <span>SYSTEM ONLINE</span>
+        <em class="model-readiness {{ 'ready' if model_ready else 'offline' }}">CNN {{ 'READY' if model_ready else 'OFFLINE' }}</em>
       </div>
     </header>
 
-    <main>
+    <main id="lab">
       <section class="hero">
-        <div>
-          <span class="eyebrow">AI IMAGE CLASSIFICATION</span>
-          <h1>猫狗图像智能识别</h1>
-          <p>上传一张宠物图片，系统将基于训练完成的 CNN 模型分析图像，并返回分类结果与模型置信度。</p>
+        <div class="hero-copy">
+          <span class="kicker"><i></i> NEURAL ARCHITECTURE CONSOLE</span>
+          <h1>看见模型<br><span>如何思考</span></h1>
+          <p>把抽象算法放进可操作的科幻实验舱。跟随数据流，亲手控制每一步，从输入一直追踪到模型输出。</p>
         </div>
-        <div class="tech-pills" aria-label="技术信息">
-          <span>PyTorch</span><span>CNN</span><span>本地推理</span>
+        <div class="hero-orbit" aria-hidden="true">
+          <div class="orbit orbit-a"><i>CNN</i></div>
+          <div class="orbit orbit-b"><i>ViT</i></div>
+          <div class="orbit orbit-c"><i>YOLO</i></div>
+          <div class="core">ML</div>
         </div>
       </section>
 
-      <section class="workspace">
-        <article class="panel upload-panel">
-          <div class="panel-heading">
-            <div><span class="step">01</span><h2>上传测试图片</h2></div>
-            <span class="limit">最大 10 MB</span>
+      <nav class="model-tabs" aria-label="选择模型">
+        <button class="model-tab active" type="button" data-model="cnn" aria-selected="true">
+          <span class="tab-index">01</span><span><b>CNN</b><small>局部视觉特征 · 分类</small></span><i>REAL + SIM</i>
+        </button>
+        <button class="model-tab" type="button" data-model="transformer" aria-selected="false">
+          <span class="tab-index">02</span><span><b>Transformer</b><small>全局关系 · 序列建模</small></span><i>SIMULATION</i>
+        </button>
+        <button class="model-tab" type="button" data-model="yolo" aria-selected="false">
+          <span class="tab-index">03</span><span><b>YOLO11</b><small>定位 + 分类 · 一次完成</small></span><i>SIMULATION</i>
+        </button>
+      </nav>
+
+      <section class="console-frame">
+        <div class="console-head">
+          <div>
+            <span class="console-code" id="console-code">MODULE / CNN</span>
+            <h2 id="console-title">卷积神经网络实验室</h2>
+            <p id="console-description">上传真实图片运行 CatDogCNN，或切换至 ResNet50 探索残差连接。</p>
           </div>
+          <span class="mode-badge real" id="mode-badge"><i></i> 真实推理</span>
+        </div>
 
-          <form id="predict-form" method="post" enctype="multipart/form-data">
-            <label class="drop-zone" id="drop-zone" for="image-input">
-              <input id="image-input" type="file" name="image" accept="image/jpeg,image/png,image/bmp,image/webp" required>
-              <div id="empty-state" class="empty-state">
-                <span class="upload-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 14v5h14v-5"/></svg>
-                </span>
-                <strong>拖拽图片到这里</strong>
-                <span>或者点击选择本地文件</span>
-                <em>支持 JPG、PNG、BMP、WEBP</em>
-              </div>
-              <div id="client-preview" class="client-preview" hidden>
-                <img id="preview-image" alt="待识别图片预览">
-                <div><strong id="file-name"></strong><span id="file-size"></span></div>
-              </div>
-            </label>
+        <div class="submode-row" id="submode-row">
+          <div class="submodes" data-submodes="cnn">
+            <button class="active" type="button" data-mode="catdog">CatDogCNN · 真实</button>
+            <button type="button" data-mode="resnet">ResNet50 · 模拟</button>
+          </div>
+          <div class="submodes" data-submodes="transformer" hidden>
+            <button class="active" type="button" data-mode="vit">ViT-B/16 · 模拟</button>
+            <button type="button" data-mode="translation">Encoder–Decoder · 模拟</button>
+          </div>
+          <div class="submodes" data-submodes="yolo" hidden>
+            <button class="active" type="button" data-mode="detect">YOLO11 · 模拟检测</button>
+          </div>
+        </div>
 
-            <div class="form-actions">
-              <button type="button" id="reset-button" class="secondary-button" disabled>重新选择</button>
-              <button type="submit" id="submit-button" class="primary-button" disabled>
-                <span class="button-label">开始智能识别</span>
-                <span class="spinner" aria-hidden="true"></span>
-              </button>
+        <div class="control-deck" aria-label="流程播放控制">
+          <button class="deck-button primary" id="play-toggle" type="button"><span>▶</span><b>播放流程</b></button>
+          <button class="deck-button" id="next-step" type="button"><span>↦</span><b>单步</b></button>
+          <button class="deck-button" id="reset-lab" type="button"><span>↺</span><b>重置</b></button>
+          <label class="speed-control">速度
+            <select id="speed-select" aria-label="动画播放速度">
+              <option value="1600">0.5×</option>
+              <option value="950" selected>1×</option>
+              <option value="500">2×</option>
+            </select>
+          </label>
+          <div class="timeline-status">
+            <span id="step-label">步骤 1 / 8</span>
+            <div class="timeline-track"><i id="timeline-progress"></i></div>
+          </div>
+        </div>
+
+        <div class="labs">
+          <!-- CNN: real CatDogCNN -->
+          <section class="lab-panel active" data-lab="cnn" data-mode-panel="catdog">
+            <div class="lab-grid catdog-grid">
+              <article class="input-station">
+                <div class="station-title"><span>INPUT BAY</span><h3>真实图片输入</h3></div>
+                <form id="predict-form" enctype="multipart/form-data" novalidate>
+                  <label class="drop-zone" id="drop-zone" for="image-input">
+                    <input id="image-input" type="file" name="image" accept="image/jpeg,image/png,image/bmp,image/webp">
+                    <span class="drop-reticle" aria-hidden="true"></span>
+                    <div id="empty-state" class="empty-state">
+                      <span class="upload-glyph">＋</span>
+                      <strong>投放猫或狗的图片</strong>
+                      <small>点击选择 / 拖拽到此处</small>
+                      <em>JPG · PNG · BMP · WEBP / ≤ 10 MB</em>
+                    </div>
+                    <div id="client-preview" class="client-preview" hidden>
+                      <img id="preview-image" alt="待识别图片预览">
+                      <span class="image-scanner" aria-hidden="true"></span>
+                      <div><strong id="file-name"></strong><small id="file-size"></small></div>
+                    </div>
+                  </label>
+                  <div class="form-actions">
+                    <button class="ghost-button" id="image-reset" type="button" disabled>清除</button>
+                    <button class="action-button" id="submit-button" type="submit" disabled><span>启动真实推理</span><i></i></button>
+                  </div>
+                  <p class="form-message" id="form-message" role="status"></p>
+                </form>
+              </article>
+
+              <article class="process-station">
+                <div class="station-title"><span>NEURAL PIPELINE</span><h3>CatDogCNN 数据流</h3></div>
+                <div class="flow-lane" data-flow="catdog">
+                  <button class="flow-step active" type="button" data-step="预处理" data-term="normalization"><b>01</b><span>Resize + Normalize<small>RGB → 3 × 150 × 150</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="卷积块 1" data-term="convolution"><b>02</b><span>Conv 3→32 + ReLU + Pool<small>32 × 75 × 75</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="卷积块 2" data-term="pooling"><b>03</b><span>Conv 32→64 + ReLU + Pool<small>64 × 37 × 37</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="卷积块 3" data-term="feature-map"><b>04</b><span>Conv 64→128 + ReLU + Pool<small>128 × 18 × 18</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="卷积块 4" data-term="relu"><b>05</b><span>Conv 128→128 + ReLU + Pool<small>128 × 9 × 9</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="全局汇聚" data-term="adaptive-pooling"><b>06</b><span>AdaptiveAvgPool<small>128 × 1 × 1</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="分类器" data-term="dropout"><b>07</b><span>FC 128→64 → 2<small>得到 cats / dogs 分数</small></span></button>
+                  <i class="flow-link"></i>
+                  <button class="flow-step" type="button" data-step="概率输出" data-term="softmax"><b>08</b><span>Softmax 概率<small>选出最高置信类别</small></span></button>
+                </div>
+              </article>
+
+              <article class="output-station">
+                <div class="station-title"><span>OUTPUT CORE</span><h3>真实预测</h3></div>
+                <div class="prediction-core" id="prediction-core">
+                  <div class="core-rings" aria-hidden="true"><i></i><i></i><i></i></div>
+                  <span id="result-label">待机</span>
+                  <strong id="result-confidence">--</strong>
+                  <small id="result-class">上传图片后显示结果</small>
+                </div>
+                <div class="probability-bars">
+                  <div><span>预测类别概率</span><b id="confidence-text">0%</b></div>
+                  <div class="energy-bar"><i id="confidence-bar"></i></div>
+                </div>
+                <p class="micro-note">此模块调用本机 <code>cat_dog_cnn.pth</code> 进行真实推理。</p>
+              </article>
             </div>
-          </form>
-        </article>
+            <div class="step-inspector"><span>当前步骤</span><div><b id="catdog-step-title">预处理</b><p id="catdog-step-copy">把任意尺寸的图片统一为模型认识的格式，就像先把不同试卷裁成统一大小。</p></div><button type="button" data-term="normalization">解释术语 ↗</button></div>
+          </section>
 
-        <article class="panel result-panel">
-          <div class="panel-heading">
-            <div><span class="step">02</span><h2>模型分析结果</h2></div>
-          </div>
-
-          {% if error %}
-          <div class="message error-message" role="alert">
-            <span aria-hidden="true">!</span><div><strong>无法完成识别</strong><p>{{ error }}</p></div>
-          </div>
-          {% elif result %}
-          <div class="prediction">
-            <div class="result-image-wrap"><img src="{{ preview_url }}" alt="{{ filename }}"></div>
-            <div class="prediction-summary">
-              <span class="result-caption">识别结果</span>
-              <div class="class-row"><strong>{{ predicted_label }}</strong><span>{{ predicted_class }}</span></div>
-              <div class="confidence-row"><span>模型置信度</span><strong>{{ confidence_percent }}%</strong></div>
-              <div class="meter" role="progressbar" aria-valuenow="{{ confidence_percent }}" aria-valuemin="0" aria-valuemax="100">
-                <span style="width: {{ confidence_percent }}%"></span>
-              </div>
-              <p class="result-note">结果由模型推断生成，仅用于学习与演示。</p>
+          <!-- CNN: ResNet50 simulation -->
+          <section class="lab-panel" data-lab="cnn" data-mode-panel="resnet" hidden>
+            <div class="sim-banner"><span>教学模拟</span>本实验展示结构与数据流，不加载 ResNet50 权重，也不执行真实预测。</div>
+            <div class="resnet-layout">
+              <article class="architecture-stage">
+                <div class="station-title"><span>RESIDUAL NETWORK</span><h3>ResNet50 主干航道</h3></div>
+                <div class="network-track resnet-track" data-flow="resnet">
+                  <button class="flow-step active" data-step="输入" type="button"><b>224²</b><span>Input<small>3 通道图像</small></span></button><i></i>
+                  <button class="flow-step" data-step="Stem" data-term="convolution" type="button"><b>112²</b><span>7×7 Conv<small>Stem</small></span></button><i></i>
+                  <button class="flow-step residual-node" data-step="Conv2_x" data-term="residual" type="button"><b>56²</b><span>Conv2_x<small>3 个瓶颈块</small></span><em class="bypass">SKIP</em></button><i></i>
+                  <button class="flow-step residual-node" data-step="Conv3_x" data-term="residual" type="button"><b>28²</b><span>Conv3_x<small>4 个瓶颈块</small></span><em class="bypass">SKIP</em></button><i></i>
+                  <button class="flow-step residual-node" data-step="Conv4_x" data-term="residual" type="button"><b>14²</b><span>Conv4_x<small>6 个瓶颈块</small></span><em class="bypass">SKIP</em></button><i></i>
+                  <button class="flow-step residual-node" data-step="Conv5_x" data-term="residual" type="button"><b>7²</b><span>Conv5_x<small>3 个瓶颈块</small></span><em class="bypass">SKIP</em></button><i></i>
+                  <button class="flow-step" data-step="汇聚" data-term="adaptive-pooling" type="button"><b>1²</b><span>Global AvgPool<small>2048 维</small></span></button><i></i>
+                  <button class="flow-step" data-step="分类" data-term="classification-head" type="button"><b>FC</b><span>Classifier<small>类别分数</small></span></button>
+                </div>
+                <div class="residual-demo" id="residual-demo">
+                  <div class="residual-main"><span>x</span><i>卷积 F(x)</i><b>＋</b><strong>F(x) + x</strong></div>
+                  <svg viewBox="0 0 700 110" preserveAspectRatio="none" aria-hidden="true"><path d="M42 70 C150 8 440 8 545 70"/></svg>
+                  <p>捷径像高速公路：原始信息可绕过拥堵的卷积路段，直接抵达加法出口。</p>
+                </div>
+              </article>
+              <aside class="parameter-console">
+                <div class="station-title"><span>EXPERIMENT</span><h3>残差对照</h3></div>
+                <label class="switch-row"><span><b>残差捷径</b><small>对比 F(x) 与 F(x)+x</small></span><input id="residual-toggle" type="checkbox" checked><i></i></label>
+                <div class="signal-meter"><span>深层信号保真度</span><strong id="residual-score">92%</strong><div><i></i></div></div>
+                <div class="lesson-card"><span>WHY?</span><p id="residual-copy">捷径为信息和梯度提供更直接的通路，让更深的网络更容易训练。</p></div>
+              </aside>
             </div>
-          </div>
-          {% else %}
-          <div class="result-placeholder">
-            <span aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M4 19V9a2 2 0 0 1 2-2h2l1.5-2h5L16 7h2a2 2 0 0 1 2 2v10H4Z"/><circle cx="12" cy="13" r="3"/></svg>
-            </span>
-            <strong>等待图片分析</strong>
-            <p>完成上传后，分类结果和置信度将在这里显示。</p>
-          </div>
-          {% endif %}
-        </article>
+          </section>
+
+          <!-- Transformer: ViT simulation -->
+          <section class="lab-panel" data-lab="transformer" data-mode-panel="vit" hidden>
+            <div class="sim-banner"><span>教学模拟</span>ViT-B/16 数据与注意力为确定性可视化，不执行真实模型推理。</div>
+            <div class="vit-layout">
+              <article class="patch-station">
+                <div class="station-title"><span>PATCH MATRIX</span><h3>224 × 224 → 196 个 Patch</h3></div>
+                <div class="patch-grid" id="patch-grid" aria-label="14乘14图像块网格"></div>
+                <p>点击任一 16×16 图像块，观察它如何“询问”其他区域。</p>
+              </article>
+              <article class="attention-station">
+                <div class="station-title"><span>ATTENTION FIELD</span><h3>多头注意力扫描</h3></div>
+                <div class="head-selector" id="head-selector" aria-label="选择注意力头"></div>
+                <canvas id="attention-canvas" width="680" height="340" aria-label="图像块注意力连线图"></canvas>
+                <div class="attention-readout"><span>选中 Patch</span><b id="selected-patch">P089</b><span>当前头</span><b id="selected-head">Head 1</b></div>
+              </article>
+            </div>
+            <div class="horizontal-pipeline" data-flow="vit">
+              <button class="flow-step active" data-step="切片" type="button"><b>01</b><span>16×16 Patches<small>196 块</small></span></button>
+              <button class="flow-step" data-step="嵌入" data-term="embedding" type="button"><b>02</b><span>Linear Embedding<small>每块变 768 维</small></span></button>
+              <button class="flow-step" data-step="序列信息" data-term="positional-encoding" type="button"><b>03</b><span>Position + CLS<small>记住位置 / 汇总</small></span></button>
+              <button class="flow-step" data-step="编码器" data-term="multi-head-attention" type="button"><b>04</b><span>12 × Encoder<small>全局交换线索</small></span></button>
+              <button class="flow-step" data-step="分类" data-term="classification-head" type="button"><b>05</b><span>MLP Head<small>输出类别</small></span></button>
+            </div>
+          </section>
+
+          <!-- Transformer: translation simulation -->
+          <section class="lab-panel" data-lab="transformer" data-mode-panel="translation" hidden>
+            <div class="sim-banner"><span>教学模拟</span>固定示例用于解释 Encoder–Decoder，输出不是在线翻译服务。</div>
+            <div class="translation-toolbar">
+              <label>选择示例<select id="sentence-select"><option value="0">机器学习很有趣。</option><option value="1">猫坐在窗边。</option><option value="2">我们一起探索未来。</option></select></label>
+              <button class="action-button compact" id="next-token" type="button">生成下一词 →</button>
+            </div>
+            <div class="translation-stage">
+              <article class="token-console">
+                <div class="station-title"><span>ENCODER INPUT</span><h3>中文源序列</h3></div>
+                <div class="token-row" id="source-tokens"></div>
+                <p>点击 Token 查看它和其他词之间的注意力强弱。</p>
+              </article>
+              <article class="transformer-core">
+                <div class="encoder-stack">
+                  <button class="flow-step active" data-step="分词" data-term="token" type="button">分词<small>句子切成 Token</small></button>
+                  <button class="flow-step" data-step="Embedding" data-term="embedding" type="button">Embedding + 位置<small>含义 + 顺序</small></button>
+                  <button class="flow-step" data-step="编码器注意力" data-term="self-attention" type="button">Encoder Self-Attention<small>理解上下文</small></button>
+                </div>
+                <div class="cross-bridge" data-term="cross-attention"><i></i><span>Cross-Attention<br><small>译文查询原文信息</small></span><i></i></div>
+                <div class="decoder-stack">
+                  <button class="flow-step" data-step="遮罩注意力" data-term="masked-attention" type="button">Masked Attention<small>不能偷看未来词</small></button>
+                  <button class="flow-step" data-step="交叉注意力" data-term="cross-attention" type="button">Decoder + Cross-Attention<small>对齐原文</small></button>
+                  <button class="flow-step" data-step="逐词输出" data-term="autoregressive" type="button">Linear + Softmax<small>预测下一个词</small></button>
+                </div>
+              </article>
+              <article class="token-console output-console">
+                <div class="station-title"><span>DECODER OUTPUT</span><h3>英文自回归输出</h3></div>
+                <div class="token-row target" id="target-tokens"></div>
+                <p id="generation-status">按“生成下一词”，观察译文如何从左到右出现。</p>
+              </article>
+            </div>
+            <div class="heatmap-wrap"><span>ATTENTION HEATMAP</span><div id="attention-heatmap" class="attention-heatmap"></div></div>
+          </section>
+
+          <!-- YOLO11 simulation -->
+          <section class="lab-panel" data-lab="yolo" data-mode-panel="detect" hidden>
+            <div class="sim-banner"><span>教学模拟</span>YOLO11 检测框与性能数字由前端规则生成，不执行 Ultralytics 权重推理。</div>
+            <div class="yolo-layout">
+              <article class="detection-station">
+                <div class="station-title"><span>LIVE DETECTION SIM</span><h3>多目标场景</h3></div>
+                <div class="detection-scene" id="detection-scene" role="img" aria-label="街景目标检测教学模拟">
+                  <div class="scene-sky"></div><div class="scene-building b1"></div><div class="scene-building b2"></div><div class="scene-road"></div>
+                  <div class="scene-car"></div><div class="scene-bike"></div><div class="scene-person p1"></div><div class="scene-person p2"></div><div class="scene-dog"></div>
+                  <div id="detection-boxes"></div>
+                  <span class="scene-grid" aria-hidden="true"></span>
+                </div>
+                <div class="detection-stats"><div><small>保留目标</small><b id="box-count">4</b></div><div><small>模拟延迟</small><b id="latency">7.2 ms</b></div><div><small>相对精度</small><b id="accuracy">82.1</b></div></div>
+              </article>
+              <aside class="parameter-console yolo-console">
+                <div class="station-title"><span>CONTROL MATRIX</span><h3>检测参数</h3></div>
+                <label class="range-row"><span><b data-term="confidence">置信度阈值</b><output id="conf-output">0.35</output></span><input id="conf-slider" type="range" min="0.1" max="0.9" step="0.05" value="0.35"></label>
+                <label class="range-row"><span><b data-term="iou">IoU 阈值</b><output id="iou-output">0.50</output></span><input id="iou-slider" type="range" min="0.1" max="0.9" step="0.05" value="0.50"></label>
+                <label class="switch-row"><span><b data-term="nms">NMS 重叠抑制</b><small>移除同一目标的重复框</small></span><input id="nms-toggle" type="checkbox" checked><i></i></label>
+                <label class="select-row"><span>YOLO11 规格</span><select id="yolo-size"><option value="n">11n · 轻巧极速</option><option value="s">11s · 小型</option><option value="m" selected>11m · 平衡</option><option value="l">11l · 高精度</option><option value="x">11x · 最大</option></select></label>
+              </aside>
+            </div>
+            <div class="horizontal-pipeline yolo-pipeline" data-flow="detect">
+              <button class="flow-step active" data-step="Letterbox" type="button"><b>01</b><span>Letterbox 640²<small>等比缩放 + 补边</small></span></button>
+              <button class="flow-step" data-step="Backbone" data-term="backbone" type="button"><b>02</b><span>Backbone<small>提取视觉特征</small></span></button>
+              <button class="flow-step" data-step="Neck" data-term="neck" type="button"><b>03</b><span>多尺度 Neck<small>融合大中小目标</small></span></button>
+              <button class="flow-step" data-step="检测头" data-term="detection-head" type="button"><b>04</b><span>Detect Head<small>框 + 类别分数</small></span></button>
+              <button class="flow-step" data-step="筛选" data-term="confidence" type="button"><b>05</b><span>置信度筛选<small>去掉弱候选</small></span></button>
+              <button class="flow-step" data-step="去重" data-term="nms" type="button"><b>06</b><span>NMS<small>合并重复目标</small></span></button>
+              <button class="flow-step" data-step="结果" type="button"><b>07</b><span>Detection<small>绘制最终框</small></span></button>
+            </div>
+          </section>
+        </div>
       </section>
 
-      <section class="info-strip">
-        <div><strong>2</strong><span>识别类别</span></div>
-        <div><strong>150 × 150</strong><span>模型输入尺寸</span></div>
-        <div><strong>本地</strong><span>图片处理方式</span></div>
+      <section class="compare-section">
+        <div class="section-heading"><span>ARCHITECTURE MAP</span><h2>三种模型，三种解决问题的视角</h2></div>
+        <div class="compare-grid">
+          <article><span class="compare-icon">▦</span><b>CNN</b><h3>由近及远看局部</h3><p>用共享卷积核扫描边缘、纹理和形状，逐层组合出类别线索。</p><em>适合：图像分类 · 局部视觉特征</em></article>
+          <article><span class="compare-icon">⌘</span><b>TRANSFORMER</b><h3>同时观察全局关系</h3><p>通过注意力让任意 Token 直接交换信息，理解远距离联系与上下文。</p><em>适合：序列 · 全局视觉 · 多模态</em></article>
+          <article><span class="compare-icon">⌗</span><b>YOLO11</b><h3>一次扫描定位并分类</h3><p>一次前向传播同时预测目标在哪里、是什么，再筛选和去除重复框。</p><em>适合：实时目标检测</em></article>
+        </div>
       </section>
     </main>
 
-    <footer>PetVision · 基于 PyTorch 构建的猫狗图像识别演示平台</footer>
+    <footer><span>机器学习展示 · OFFLINE INTERACTIVE LAB</span><small>CatDogCNN 为真实推理，其余模块均为教学模拟</small></footer>
   </div>
+
+  <aside class="knowledge-drawer" id="knowledge-drawer" aria-hidden="true" aria-labelledby="term-title">
+    <button class="drawer-close" id="drawer-close" type="button" aria-label="关闭术语解释">×</button>
+    <span class="drawer-code">KNOWLEDGE CAPSULE</span>
+    <h2 id="term-title">术语</h2>
+    <p class="term-definition" id="term-definition"></p>
+    <div class="knowledge-block"><span>初学者类比</span><p id="term-analogy"></p></div>
+    <div class="knowledge-block"><span>当前步骤中的作用</span><p id="term-role"></p></div>
+    <div class="related-terms"><span>相关术语</span><div id="related-terms"></div></div>
+    <div class="drawer-actions"><button id="jump-to-step" type="button">跳到对应流程步骤</button><button id="copy-term-link" type="button">复制术语链接</button></div>
+  </aside>
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
