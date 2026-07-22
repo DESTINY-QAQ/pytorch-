@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Transformer 新手术语表</title><link rel="stylesheet" href="../assets/lesson.css"><link rel="stylesheet" href="../assets/beginner.css"></head><body><main><div class="eyebrow">Quick Reference</div><h1>Transformer 新手术语表</h1><p class="lead">遇到术语时先看“一句话”，再看“在模型里做什么”。</p><table><thead><tr><th>术语</th><th>一句话</th><th>在模型里做什么</th></tr></thead><tbody>
+<tr><td>Token</td><td>文本切分后的单位</td><td>模型读取和生成的基本单位，不一定等于一个完整单词。</td></tr>
+<tr><td>Embedding</td><td>token 的数字表示</td><td>把离散 token ID 映射成可计算的连续向量。</td></tr>
+<tr><td>Positional Encoding</td><td>token 的位置标记</td><td>让 Attention 能区分相同 token 出现在不同位置。</td></tr>
+<tr><td>Parameter</td><td>训练过程中学到的数字</td><td>包括 Wq、Wk、Wv、FFN 和输出层权重。</td></tr>
+<tr><td>Activation</td><td>本次输入产生的中间结果</td><td>Q/K/V、隐藏状态等都属于 activation，不是长期固定参数。</td></tr>
+<tr><td>Query</td><td>当前 token 想寻找什么</td><td>与所有 Key 比较，产生匹配分数。</td></tr>
+<tr><td>Key</td><td>每个 token 的匹配标签</td><td>告诉 Query 自己是否值得被关注。</td></tr>
+<tr><td>Value</td><td>真正被读取的内容</td><td>根据 Attention 权重被加权汇总。</td></tr>
+<tr><td>Logit</td><td>softmax 前的原始分数</td><td>可以为任意实数，不是概率。</td></tr>
+<tr><td>Softmax</td><td>把分数变成比例</td><td>输出非负、总和为 1 的权重或词表概率。</td></tr>
+<tr><td>Head</td><td>一套独立的关注视角</td><td>多个 head 可以并行寻找不同类型的关系。</td></tr>
+<tr><td>Residual</td><td>把输入直接加回输出</td><td>保留原信息，并改善深层网络的梯度传播。</td></tr>
+<tr><td>LayerNorm</td><td>整理每个 token 的特征尺度</td><td>让网络数值更稳定。</td></tr>
+<tr><td>FFN</td><td>逐 token 的小型神经网络</td><td>对 Attention 汇总后的特征进行非线性加工。</td></tr>
+<tr><td>Causal Mask</td><td>遮住未来位置</td><td>保证 Decoder 生成当前 token 时不能偷看未来。</td></tr>
+<tr><td>Cross-Attention</td><td>Decoder 查询 Encoder</td><td>Q 来自 Decoder，K/V 来自 Encoder。</td></tr>
+<tr><td>Forward Pass</td><td>从输入计算到输出</td><td>工作簿展示的主要过程。</td></tr>
+<tr><td>Backpropagation</td><td>根据错误反向计算梯度</td><td>属于训练过程，本工作簿没有展示。</td></tr>
+</tbody></table><p><a class="glossary-link" href="../lessons/0001-transformer-full-stack-workbook.html">返回 Excel 对照课</a></p></main></body></html>
