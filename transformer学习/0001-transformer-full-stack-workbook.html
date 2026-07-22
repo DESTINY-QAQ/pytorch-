@@ -1,0 +1,81 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Transformer Full Stack 工作簿详解</title><link rel="stylesheet" href="../assets/lesson.css"></head><body><main>
+<div class="eyebrow">Lesson 0001 · Excel by Hand</div><h1>从一个 token 到下一词概率</h1>
+<p class="lead">这份课件逐格解释 <code>Transformer-Full-Stack.xlsx</code>。核心目标不是记住格子地址，而是看懂每一步的输入、参数、输出和矩阵形状。</p>
+
+<div class="card good"><b>先给结论：</b>这个工作簿演示的是一次 <em>forward pass</em>，没有 loss、backpropagation 或 optimizer。训练真正学到的是 Embedding、<code>W_Q/W_K/W_V</code>、FFN、输出层等参数；<code>Q/K/V</code> 则是当前输入乘上这些参数后临时得到的激活。</div>
+
+<h2>1. 全图：这个 Excel 在算什么</h2>
+<div class="flow"><div class="node"><b>源 token</b>小 狗 和 小 猫 玩</div><div class="node"><b>Encoder</b>Self-Attention + FFN</div><div class="node"><b>目标右移</b>[S] the dog and cat play</div><div class="node"><b>Decoder</b>Masked Self-Attention + Cross-Attention</div><div class="node"><b>输出层</b>24 个词的 softmax</div><div class="node"><b>下一词</b>fill ≈ 62.17%</div></div>
+<p>表格采用一个很关键的约定：<b>列对应 token，行对应特征维度</b>。因此输入写作 <span class="shape">d_model × sequence_length</span>，注意力分数写作 <code>KᵀQ</code>。在常见 PyTorch 教材里 token 常放在行上，所以你更多看到 <code>QKᵀ</code>；本质相同。</p>
+
+<h2>2. Input Embedding 与 Positional Encoding</h2>
+<p>源序列有 6 个 token，词表大小 16，首先变成 one-hot 矩阵。一个 <span class="shape">5×16</span> 的 Embedding 参数矩阵乘以 <span class="shape">16×6</span> one-hot，得到 <span class="shape">5×6</span> 的词向量矩阵：</p>
+<div class="formula">X_embed = E · OneHot<br>形状：(5×16)(16×6) = 5×6</div>
+<p>随后加上同形状的 sinusoidal Positional Encoding：<code>X = X_embed + PE</code>。Embedding 告诉模型“这是什么词”，位置编码告诉模型“它在第几个位置”。没有位置编码，Self-Attention 本身不能区分词序。</p>
+
+<h2>3. Encoder Self-Attention：Q、K、V 从哪里来</h2>
+<p>本表的 Encoder 使用 2 个 head，每个 head 的 <code>d_k=d_v=3</code>。输入维度是 5，因此三个投影并不要求方阵：</p>
+<div class="formula">Q = W_Q X　　K = W_K X　　V = W_V X<br>每个堆叠结果：(6×5)(5×6) = 6×6<br>拆成 2 个 head 后：每个 Qᵢ、Kᵢ、Vᵢ 都是 3×6</div>
+<p><code>Q</code> 表示当前位置正在寻找什么，<code>K</code> 表示每个位置可被怎样匹配，<code>V</code> 是匹配后真正汇总的信息。它们不是训练结束后固定的三张表；固定的是投影参数，Q/K/V 会随输入改变。</p>
+
+<h3>Scaled dot-product attention</h3>
+<div class="formula">Scores = KᵀQ / √d_k<br>形状：(6×3)(3×6) = 6×6<br>Weights = softmax(Scores)<br>Head = V · Weights　→　(3×6)(6×6)=3×6</div>
+<p>为什么除以 <code>√d_k</code>？若 Q、K 各维近似独立且方差为 1，点积是 <code>d_k</code> 项之和，方差约为 <code>d_k</code>，标准差约为 <code>√d_k</code>。除掉它后，logit 的典型尺度较稳定，softmax 不容易过早饱和。它不是消除所有维度影响，而是控制点积的统计尺度。</p>
+
+<div class="card quiz"><b>检查 1：</b>为什么这张表写 <code>KᵀQ</code>，论文常写 <code>QKᵀ</code>？<br><button onclick="this.nextElementSibling.style.display='block'">显示答案</button><div class="answer">因为本表把 token 放在列上，论文常把 token 放在行上。交换数据布局后，矩阵表达自然转置；每个 query 与所有 key 做点积这一语义没有变化。</div></div>
+
+<h3>Multi-Head 合并</h3>
+<p>两个 <span class="shape">3×6</span> head 纵向拼接为 <span class="shape">6×6</span>，再经 <span class="shape">5×6</span> 的 <code>W_O</code> 投影回 <span class="shape">5×6</span>，使它能和原输入做 residual addition。</p>
+
+<h2>4. Add & Norm 与 Encoder FFN</h2>
+<p>注意力输出先与进入该子层前的输入相加，再做规范化。Residual connection 保留原信息并给梯度提供短路径；LayerNorm 控制每个 token 的特征尺度。</p>
+<div class="formula">H₁ = Norm(X + MultiHeadAttention(X))<br>H₂ = Norm(H₁ + FFN(H₁))</div>
+<p>本表 FFN 把特征从 5 扩到 12，再压回 5：<code>5 → 12 → 5</code>。它对每个 token 独立使用同一组参数；注意力负责 token 之间交流，FFN 负责每个 token 内部的非线性变换。</p>
+
+<h2>5. Decoder 的三块功能</h2>
+<table><thead><tr><th>子层</th><th>Q 来自哪里</th><th>K/V 来自哪里</th><th>作用</th></tr></thead><tbody>
+<tr><td>Masked Self-Attention</td><td>已给出的目标前缀</td><td>已给出的目标前缀</td><td>整理“已经生成了什么”，但不能偷看未来</td></tr>
+<tr><td>Cross-Attention</td><td>Decoder 当前状态</td><td>Encoder 的源句表示</td><td>针对当前要生成的位置，从源句取相关信息</td></tr>
+<tr><td>FFN</td><td colspan="2">每个目标位置独立处理</td><td>非线性提炼每个位置的特征</td></tr>
+</tbody></table>
+
+<h3>Causal mask 为什么能阻止偷看</h3>
+<p>训练 Decoder 时，整句目标 token 可以并行放进矩阵，但位置 <code>t</code> 只能利用不晚于 <code>t</code> 的位置。表中用 <code>-99</code> 近似负无穷，加到禁止的 score 上；softmax 后对应概率几乎为 0。</p>
+<div class="formula">softmax([可见分数, -99]) ≈ [正常概率, 0]</div>
+<p>注意本表分数矩阵的列是 query、行是 key，所以看起来被遮住的是下三角；换成常见“query 在行”的布局后，会显示为上三角 mask。</p>
+
+<h3>Cross-Attention 的形状</h3>
+<p>目标序列预留 8 个位置，源序列有 6 个位置。对每个 head，Decoder query 是 <span class="shape">3×8</span>，Encoder key/value 是 <span class="shape">3×6</span>：</p>
+<div class="formula">K_encoderᵀ Q_decoder → (6×3)(3×8)=6×8<br>V_encoder · Weights → (3×6)(6×8)=3×8</div>
+<p>这张 <span class="shape">6×8</span> 权重表的每一列回答：“当前目标位置应该看源句的哪几个词？”这就是 Encoder 和 Decoder 联合起来的核心接口。</p>
+
+<h2>6. Linear、softmax 与下一词</h2>
+<p>Decoder 最终状态为 <span class="shape">6×8</span>。输出矩阵把每个 6 维状态映射为 24 个词的 logits：</p>
+<div class="formula">Logits = W_vocab H<br>(24×6)(6×8)=24×8<br>P(token | context)=softmax(Logits)</div>
+<p>工作簿通过 <code>COUNTA(...)-1</code> 找到最后一个已填写目标位置 5，也就是 <code>play</code>，再取该列 24 个概率。最高几项如下：</p>
+<table><thead><tr><th>候选词</th><th>概率</th></tr></thead><tbody><tr><td>fill</td><td>62.1668%</td></tr><tr><td>light</td><td>11.6669%</td></tr><tr><td>smile</td><td>9.7670%</td></tr><tr><td>the</td><td>5.6851%</td></tr><tr><td>play</td><td>4.4487%</td></tr></tbody></table>
+<p>如果使用 greedy decoding，就选择 <code>fill</code>；若使用 sampling，则按整个分布随机抽样。选出的 token 会追加到目标序列，再重新运行 Decoder，循环生成。</p>
+
+<h2>7. 它与 GPT 的关系</h2>
+<div class="two"><div class="card"><h3>原始 Transformer</h3><p>Encoder 读完整源输入；Decoder 通过 causal self-attention 读目标前缀，并通过 cross-attention 查询 Encoder。适合翻译等 sequence-to-sequence 任务。</p></div><div class="card"><h3>GPT</h3><p>本质是 Decoder-only：保留 causal self-attention 和 FFN，不使用独立 Encoder，也没有 Encoder–Decoder cross-attention。提示词和已生成 token 都在同一条序列里。</p></div></div>
+<p>因此“GPT 预测下一个词”的直觉是对的，但更准确的说法是：给定已有 token，模型通过多层 masked self-attention 计算最后位置的隐藏状态，再映射到整个词表的下一个 token 概率。训练通过预测误差更新所有参数，而不是训练一次后只存下一词。</p>
+
+<h2>8. 这份工作簿的教学简化与异常</h2>
+<div class="card warning"><ul>
+<li><b>并未展示训练：</b>没有 target loss、反向传播和参数更新，权重是预填的演示值。</li>
+<li><b>SOFTMAX 数值稳定性：</b>命名公式直接使用 <code>EXP(x)/SUM(EXP(x))</code>；工程实现通常先减 <code>MAX(x)</code>，概率不变但更不易溢出。</li>
+<li><b>LayerNorm 是简化版：</b><code>NORMALIZE</code> 使用 <code>AVERAGE</code>、样本标准差 <code>STDEV</code> 和 epsilon 0.001，不完全等同于现代框架中的 LayerNorm 实现。</li>
+<li><b>FFN 的第二次 ReLU：</b>本表在第二个 linear 后还出现 ReLU；标准 Transformer 通常只在两层 linear 之间激活。</li>
+<li><b>公式异常：</b>causal mask 的命名区域公式中存在字面量 <code>#REF!</code>。若 Excel 中出现错误，应优先修复该引用。</li>
+<li><b>兼容性：</b><code>MAKEARRAY</code>、<code>LAMBDA</code>、动态数组等需要较新的 Microsoft Excel；第三方渲染器可能显示 <code>#VALUE!</code>，不必立刻判定原文件已损坏。</li>
+</ul></div>
+
+<h2>9. 现在最值得掌握的 20%</h2>
+<ol><li>参数是 <code>W</code>，Q/K/V 是由当前输入算出的中间值。</li><li>Attention 的本质是“匹配 Q 和 K，再按权重汇总 V”。</li><li><code>√d_k</code> 控制 logit 尺度；mask 控制信息可见性。</li><li>Encoder 做双向理解，Decoder 做受约束生成，cross-attention 把二者接起来。</li><li>GPT 删除了独立 Encoder 和 cross-attention，但“最后状态 → logits → softmax → 下一 token”的主线不变。</li></ol>
+
+<div class="card quiz"><b>检查 2：</b>训练真正更新的是 Q/K/V，还是 W_Q/W_K/W_V？<br><button onclick="this.nextElementSibling.style.display='block'">显示答案</button><div class="answer">更新的是 W_Q/W_K/W_V 等模型参数。Q/K/V 是每次 forward 时由当前输入和这些参数相乘得到的激活；换一句输入，它们就会改变。</div></div>
+
+<h2>动手追踪</h2><p>建议在 Excel 中依次点击：<code>Z50</code>（Encoder 输入）→ <code>Z67/Z80/Z93</code>（Q/K/V）→ <code>AM73</code>（score）→ <code>AW73</code>（softmax）→ <code>AW83</code>（加权 V）→ <code>Z218</code>（Encoder 输出）→ <code>CL191</code>（cross-attention Q）→ <code>CL367</code>（logits）→ <code>CL397</code>（概率）→ <code>CL429</code>（最后位置的下一词分布）。每到一格，先写出矩阵形状，再看公式。</p>
+
+<p class="lead">下一课建议：只挑 Encoder 第 0 个 head，手算一个 query 列的 6 个 score、softmax 和 weighted sum。能独立算通这一列，就真正掌握了 Attention 的核心。</p>
+</main></body></html>
