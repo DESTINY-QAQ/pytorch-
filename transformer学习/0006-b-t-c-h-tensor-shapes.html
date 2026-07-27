@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>B、T、C、H：读懂 Transformer 张量形状</title>
+  <link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+  <header class="mast"><div class="wrap"><p class="eyebrow">微课 06 · 10 分钟</p><h1>B、T、C、H：形状不是密码</h1><p>目标：看到 [B,T,C] 或 [B,H,T,T] 时，能说出每个维度是什么、为什么存在、会影响什么。</p><nav class="nav"><a href="../index.html#shapes">回到互动总课</a><a href="../reference/transformer-glossary.html">术语表</a></nav></div></header>
+  <main class="wrap sheet">
+    <p class="lead"><strong>先记一句：</strong>B 是一次并行处理几条序列；T 是每条序列有几个 token；C 是每个 token 用多少个数字表示；H 是把 C 维表示切成几路并行注意力。</p>
+    <div class="flow"><div><strong>B</strong><br><span>Batch<br>几条句子</span></div><div><strong>T</strong><br><span>Time<br>每句多长</span></div><div><strong>C</strong><br><span>Channels<br>每 token 多宽</span></div><div><strong>H</strong><br><span>Heads<br>几路注意力</span></div></div>
+    <h2>从一个真的 batch 开始</h2>
+    <pre><code>第 0 条序列: [Transformer, 学习, 从, token]
+第 1 条序列: [注意力, 读取, 上下文, 。]
+
+token_ids.shape == [2, 4]        # B=2，T=4
+hidden.shape    == [2, 4, 8]     # C=8</code></pre>
+    <p>它表示 <strong>2 条句子 × 每条 4 个 token × 每个 token 8 个浮点特征</strong>。<code>hidden[1,2]</code> 就是第 1 条句子的第 2 个 token 的 8 维向量。</p>
+    <h2>B：batch size，一次处理几条序列</h2>
+    <p>B 的作用是并行。它不改变某个句子的意思，主要影响吞吐量、显存与一次梯度估计。当前项目训练时取 <code>batch_size=16</code>，因此 <code>x.shape = [16,32]</code>：同时从语料中取 16 段、每段 32 token 的文本。</p>
+    <pre><code>x, y = get_batch(data, batch_size=16, block_size=32, device=device)
+logits = model(x)     # [16,32] → [16,32,vocab_size]</code></pre>
+    <h2>T：sequence length，每条序列有几个 token</h2>
+    <p>T 决定这一步能使用多长的上下文。教学模型中 <code>block_size=32</code>，所以训练样本每段为 32 个 token。注意力要让每个 Query 与每个 Key 比较，因此每个头都会产生一个 <code>T×T</code> 的分数表。</p>
+    <pre><code>若 T=4，一个头的 scores 是 [4,4]：
+Query 0 只能看 Key 0
+Query 1 能看 Key 0、1
+Query 2 能看 Key 0、1、2
+Query 3 能看 Key 0、1、2、3</code></pre>
+    <p>因果 mask 遮住未来位置。T 从 32 加到 64，注意力表从 <code>32²=1024</code> 格变为 <code>64²=4096</code> 格；长度翻倍，主要注意力计算约变四倍。</p>
+    <h2>C：d_model，每个 token 的表示宽度</h2>
+    <p>C 是一个 token 隐藏状态的特征数。Embedding 把整数 ID 查成 C 维浮点向量，注意力、FFN 和残差连接都保持主干为 <code>[B,T,C]</code>。C 更大表示空间更宽，但线性层与 FFN 的参数和计算通常也更多。</p>
+    <pre><code>cfg.d_model = 96
+self.token_embedding = nn.Embedding(vocab_size, 96)
+x = self.token_embedding(token_ids)  # [B,T] → [B,T,96]</code></pre>
+    <p>不要把 C 的第 0、1、2 维理解成固定的人类概念；它们是训练学出的坐标，整体向量和后续层共同形成有用表示。</p>
+    <h2>H：heads，把 C 维表示切成几路注意力</h2>
+    <p>通常固定 C 后，H 把每个 token 的向量分成 H 份，每头宽度 <code>D=C/H</code>。本项目的 <code>C=96, H=4</code>，所以每头 <code>D=24</code>。C 必须能被 H 整除。</p>
+    <pre><code>x:      [B,T,C]   = [16,32,96]
+q/k/v:  [B,H,T,D] = [16,4,32,24]
+scores: [B,H,T,T] = [16,4,32,32]
+out:    [B,T,C]   = [16,32,96]</code></pre>
+    <p>源码里的 <code>view(batch, time, n_heads, head_dim).transpose(1, 2)</code> 正是在做这个拆分与调换顺序。H 并不是多复制 H 份完整模型；它是在同一个 C 维总宽度内提供多路并行的注意力计算。</p>
+    <h2>一条形状路线</h2>
+    <div class="formula">IDs [B,T] → Embedding [B,T,C] → Q/K/V [B,H,T,D]，D=C/H → scores [B,H,T,T] → 合并后 [B,T,C] → logits [B,T,V]</div>
+    <p>PyTorch 的 <code>batch_first=True</code> 也把输入输出写成 <code>(batch, seq, feature)</code>，并明确说明 <code>embed_dim</code> 会分给 <code>num_heads</code>。这与本项目的 [B,T,C] → [B,H,T,D] 完全一致。<a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.MultiheadAttention.html">PyTorch 文档</a></p>
+    <h2>两个实际例子</h2>
+    <table class="compare"><thead><tr><th>场景</th><th>B、T、C、H</th><th>读出来的含义</th></tr></thead><tbody><tr><td>本项目训练</td><td><code>16,32,96,4</code></td><td>16 段文本；每段 32 token；每 token 96 维；4 个头各处理 24 维；每头有 32×32 的注意力表。</td></tr><tr><td>聊天生成</td><td><code>1,128,768,12</code></td><td>只生成一条回答，但需看 128 个历史 token；每头 64 维；较大的 T 使 KV cache 更重要。</td></tr><tr><td>报错排查</td><td><code>C=10,H=3</code></td><td>不合法：10 无法均分为 3 个头。可改为 C=12，或改 H=2/5。</td></tr></tbody></table>
+    <div class="quiz" data-answer="b" data-good="正确。D=C/H=24；scores 需要一个 Query 位置和一个 Key 位置，所以最后两维是 32×32。" data-try="先算 D=C/H；再想 scores 同时对应 Query 与 Key 的位置。"><h3>检索练习：x 是 [16,32,96]，H=4。scores 的形状是哪一个？</h3><div class="quiz-grid"><button data-choice="a">[16,32,4,24]</button><button data-choice="b">[16,4,32,32]</button><button data-choice="c">[16,4,32,24]</button></div><p class="feedback"></p></div>
+    <div class="callout win"><strong>最实用的判断法：</strong>先问有几条序列，得到 B；每条多长，得到 T；每个 token 多宽，得到 C；C 被分成几路注意力，得到 H。看到 [B,H,T,T] 时，就想到每个 batch、每个头都有一张 token 对 token 的注意力表。</div>
+    <p class="small">下一步：回到 <a href="../index.html#attentionMathLab">注意力矩阵计算器</a>，亲手算 B=1、T=3、C=2、H=1 的玩具例子。任何维度不清楚，都可以继续问我。</p>
+    <p class="small">主要参考：<a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a>；<a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.MultiheadAttention.html">PyTorch MultiheadAttention</a>。</p>
+  </main>
+  <script src="../assets/quiz.js"></script>
+</body>
+</html>
