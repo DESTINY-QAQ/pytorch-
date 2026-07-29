@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="面向 Python 与 PyTorch 新手的 Embedding 训练互动课程：Word2Vec、GloVe、BERT、GPT、负采样与上下文表示。">
+  <title>Embedding 训练深度课｜从查表到上下文表示</title>
+  <link rel="stylesheet" href="../assets/course.css">
+  <link rel="stylesheet" href="../assets/embedding-course.css">
+</head>
+<body class="embedding-course">
+  <header class="embedding-hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Lesson 07 · PDF 深度讲解 · Python / PyTorch 新手</p>
+        <h1>Embedding：从查表到读懂上下文</h1>
+        <p class="hero-lead">围绕 9 页《Embedding（词嵌入）模型的训练方法》，把 Word2Vec、GloVe、BERT/GPT 的训练目标拆成可以点、可以算、可以改参数的 8 个小关卡。</p>
+        <div class="hero-badges"><span class="hero-badge">8 个短关卡</span><span class="hero-badge">6 个互动实验</span><span class="hero-badge">6 道即时反馈题</span><span class="hero-badge">原文纠错与边界</span></div>
+      </div>
+      <div class="vector-orbit" aria-hidden="true">
+        <span class="orbit-dot one"></span><span class="orbit-dot two"></span><span class="orbit-dot three"></span>
+        <div class="vector-card"><p>token「苹果」→ E[2]</p><div class="vector-row"><span>-0.32</span><span>0.73</span><span>0.11</span><span>-0.45</span></div></div>
+      </div>
+    </div>
+  </header>
+  <div class="course-progress" aria-hidden="true"><span id="embeddingProgressFill"></span></div>
+
+  <main class="wrap embedding-layout">
+    <aside class="embedding-sidebar" aria-label="课程导航">
+      <h2>8 个学习关卡</h2>
+      <nav>
+        <a href="#map" class="active">0. 先校准课件</a>
+        <a href="#lookup">1. ID 如何查成向量</a>
+        <a href="#word2vec">2. Word2Vec</a>
+        <a href="#glove">3. GloVe</a>
+        <a href="#transformer">4. BERT 与 GPT</a>
+        <a href="#training">5. PyTorch 如何更新</a>
+        <a href="#pitfalls">6. 易错点与边界</a>
+        <a href="#practice">7. 检索练习</a>
+      </nav>
+      <div class="checkpoint">
+        <label><input type="checkbox" data-chapter-check="map"> 能区分静态表与上下文态</label>
+        <label><input type="checkbox" data-chapter-check="lookup"> 会追踪 [B,T] → [B,T,C]</label>
+        <label><input type="checkbox" data-chapter-check="word2vec"> 会生成 Skip-gram / CBOW 样本</label>
+        <label><input type="checkbox" data-chapter-check="glove"> 能读 GloVe 目标函数</label>
+        <label><input type="checkbox" data-chapter-check="transformer"> 能比较 MLM 与 CLM</label>
+        <label><input type="checkbox" data-chapter-check="training"> 知道梯度怎样更新 embedding</label>
+        <label><input type="checkbox" data-chapter-check="pitfalls"> 记住 6 个高频误区</label>
+        <label><input type="checkbox" data-chapter-check="practice"> 完成检索练习</label>
+        <p id="embeddingProgressText" class="progress-copy">已完成 0 / 8 个关卡</p>
+        <button id="resetEmbeddingProgress" class="reset-progress" type="button">清空本页记录</button>
+      </div>
+    </aside>
+
+    <article class="embedding-main">
+      <section id="map" class="lesson-section">
+        <p class="section-kicker">关卡 0 · 建立正确地图</p>
+        <h2>先修正一个会影响整篇理解的词义混淆</h2>
+        <p class="lead">课件的主题是“词嵌入”，但它在部分段落里把三种不同对象都叫 embedding。新手如果不先分开，后面很容易以为 Transformer 每次都在修改查表结果。</p>
+        <div class="concept-grid">
+          <div class="concept-card blue"><h3>① Token ID</h3><p>只是词表索引，例如“猫”是 0。“0 比 4 小”没有语义意义。</p><p><code>dtype=torch.long</code></p></div>
+          <div class="concept-card blue"><h3>② 输入 token embedding</h3><p>参数矩阵 <code>E[V,C]</code> 的某一行。同一 token ID 在同一模型中先查到同一行。</p><p><code>x = E[token_id]</code></p></div>
+          <div class="concept-card good"><h3>③ 上下文 hidden state</h3><p>输入向量经过注意力、FFN 和多层堆叠后的结果；同一 token 会随句子改变。</p><p><code>h = Transformer(x, context)</code></p></div>
+          <div class="concept-card warn"><h3>④ 输出 embedding / 输出权重</h3><p>Word2Vec 常有输入表和输出表；语言模型的词表输出层也可能与输入表共享权重。不要默认只有一张表。</p></div>
+        </div>
+        <div class="truth-box"><strong>本课的总心智模型</strong>Embedding 层本身是一张可训练查找表；“动态上下文表示”不是查表结果自动变化，而是后续网络读取上下文后计算出来的新向量。</div>
+
+        <h3>PDF 内容核对：哪些可靠，哪些需要校准？</h3>
+        <table class="audit-table">
+          <thead><tr><th>原课件说法</th><th>判断</th><th>本课采用的精确版本</th></tr></thead>
+          <tbody>
+            <tr><td>Skip-gram / CBOW 的预测方向 <span class="source-chip">PDF p.2</span></td><td><span class="status-ok">已确认</span></td><td>Skip-gram：中心词 → 周围词；CBOW：周围词集合 → 中心词。</td></tr>
+            <tr><td>Transformer 有“动态 embedding” <span class="source-chip correction">PDF p.5-6</span></td><td><span class="status-fix">需纠正</span></td><td>输入 token embedding 仍是参数表的静态查找；层后 hidden state 才依上下文动态变化。</td></tr>
+            <tr><td>BERT 把 15% token 全换成 [MASK] <span class="source-chip correction">PDF p.6</span></td><td><span class="status-fix">不精确</span></td><td>原始 BERT 选择 15% 位置；选中后 80% 用 [MASK]、10% 随机词、10% 原词不变。</td></tr>
+            <tr><td>GloVe 内积接近共现次数 <span class="source-chip correction">PDF p.3-4</span></td><td><span class="status-care">过度简化</span></td><td><code>wᵢ·w̃ⱼ + bᵢ + b̃ⱼ</code> 逼近 <code>log Xᵢⱼ</code>，还要乘频率权重 <code>f(Xᵢⱼ)</code>。</td></tr>
+            <tr><td>子词可消除所有 OOV <span class="source-chip correction">PDF p.7</span></td><td><span class="status-care">取决于算法</span></td><td>字节级 BPE/字符回退可以保证可表示；普通 WordPiece/BPE 仍可能出现未知单元或覆盖缺口。</td></tr>
+            <tr><td>通常取“最后子词”代表整词 <span class="source-chip correction">PDF p.8</span></td><td><span class="status-care">没有统一默认</span></td><td>首子词、末子词、平均池化、任务对齐都有人用；选择应随模型和任务验证。</td></tr>
+          </tbody>
+        </table>
+        <p class="small">“已确认”指与原论文/官方文档一致；“需纠正”指课件表述会改变机制理解；“过度简化”指在入门层面有直觉价值，但不能当作严格结论。原课件：<a href="../../【Transformer基础-2】Embedding （词嵌入）模型的训练方法.pdf">打开本地 PDF</a>。</p>
+      </section>
+
+      <section id="lookup" class="lesson-section">
+        <p class="section-kicker">关卡 1 · Python / PyTorch 预备</p>
+        <h2><code>nn.Embedding</code> 到底做了什么？</h2>
+        <p class="lead">它最像“按 ID 取数据库的一行”，不是把整数做普通数学运算。词表大小为 <code>V</code>，向量维度为 <code>C</code>，参数矩阵形状就是 <code>[V,C]</code>。</p>
+        <div class="shape-pipeline"><span class="shape-pill">token IDs [B,T]</span><span class="shape-arrow">→</span><span class="shape-pill">按 ID 查 E 的行</span><span class="shape-arrow">→</span><span class="shape-pill">vectors [B,T,C]</span></div>
+        <div class="fact-grid">
+          <div class="concept-card"><h3>Python 层面</h3><p><code>ids</code> 是整数张量；<code>emb(ids)</code> 像函数调用，PyTorch 实际执行模块的 <code>forward</code>。</p></div>
+          <div class="concept-card"><h3>训练层面</h3><p><code>emb.weight</code> 是 <code>nn.Parameter</code>。反向传播为参与本批次的行计算梯度，优化器再更新它们。</p></div>
+        </div>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动实验 1：亲手查表并相加</h3><p>点矩阵行或修改 token、位置和句段，观察谁相同、谁改变。</p></div><span class="lab-tag">LOOKUP LAB</span></div>
+          <div class="control-row">
+            <label>Token<select id="lookupToken"><option value="0">猫（ID 0）</option><option value="1">狗（ID 1）</option><option value="2" selected>苹果（ID 2）</option><option value="3">吃（ID 3）</option><option value="4">手机（ID 4）</option></select></label>
+            <label>位置 <input id="lookupPosition" type="range" min="0" max="4" value="1"><output id="lookupPositionOut">1</output></label>
+            <label>句段（BERT 可选）<select id="lookupSegment"><option value="none">不使用</option><option value="A" selected>Segment A</option><option value="B">Segment B</option></select></label>
+          </div>
+          <div id="lookupMatrix"></div>
+          <div id="vectorEquation" class="vector-equation"></div>
+          <div id="lookupResult" class="lab-output"></div>
+          <p class="small">矩阵数字为教学示例。真实模型会随机初始化或载入预训练权重；相加成立的前提是 token、position、segment 的末维都等于 <code>C</code>。</p>
+        </div>
+
+        <div class="mistake-box"><strong>高频报错：把浮点张量当 ID</strong><code>nn.Embedding</code> 的输入是索引，通常要 <code>torch.long</code>。输出才是浮点数。若出现 “Expected Long or Int”，先检查 <code>ids.dtype</code>。</div>
+        <div class="quiz" id="quiz-lookup" data-answer="a" data-good="答对：ID 相同就先查同一行；上下文化发生在后续层。" data-try="再想一次：此时还没有经过注意力层。">
+          <h3>检索 1：同一模型里，两个句子的“苹果”在输入查表后怎样？</h3>
+          <div class="quiz-options"><button class="choice-button" data-choice="a">始终相同</button><button class="choice-button" data-choice="b">随句改变</button><button class="choice-button" data-choice="c">随机变化</button></div><p class="quiz-feedback"></p>
+        </div>
+      </section>
+
+      <section id="word2vec" class="lesson-section">
+        <p class="section-kicker">关卡 2 · PDF p.2-3</p>
+        <h2>Word2Vec：让“常在相似环境出现”的词靠近</h2>
+        <p class="lead">Word2Vec 不是一份固定词典，而是两个训练架构的统称。数据没有人工语义标签；监督信号来自文本自己，所以今天更精确地说，它是<strong>自监督表示学习</strong>。</p>
+
+        <div class="compare-grid">
+          <div class="concept-card good"><h3>Skip-gram</h3><p><strong>输入：</strong>中心词</p><p><strong>预测：</strong>窗口内每个上下文词</p><p><strong>直觉：</strong>一个中心词产生多条训练对。</p></div>
+          <div class="concept-card blue"><h3>CBOW</h3><p><strong>输入：</strong>窗口内上下文集合</p><p><strong>预测：</strong>中间中心词</p><p><strong>直觉：</strong>先把上下文向量求和或平均。</p></div>
+        </div>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动实验 2：滑动窗口怎样制造训练样本？</h3><p>点任意 token 设为中心词，再改变窗口大小。</p></div><span class="lab-tag">WINDOW LAB</span></div>
+          <div class="control-row"><label>窗口半径 <input id="windowSize" type="range" min="1" max="2" value="1"><output id="windowSizeOut">1</output></label></div>
+          <div id="windowTokens" class="token-strip"></div>
+          <div id="windowPairs" class="lab-output good"></div>
+          <p class="small">绿色是上下文，蓝色是中心词。语料边缘的 token 上下文更少；真实训练还常对高频词做下采样。</p>
+        </div>
+
+        <h3>为什么需要负采样？</h3>
+        <p>如果词表有 50,000 个 token，每条样本都做一次 50,000 类 softmax 很贵。负采样改成：看一个真实中心-上下文对，再抽少量噪声词，做若干 sigmoid 二分类。</p>
+        <div class="formula-card">maximize log σ(u<sub>context</sub> · v<sub>center</sub>) + Σ log σ(−u<sub>negative</sub> · v<sub>center</sub>)<span class="formula-note">正对的点积要大，负对的点积要小。v 来自输入表 W_in；u 来自输出表 W_out。</span></div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动实验 3：负采样损失计算器</h3><p>拖动点积。观察“正例很像、负例不像”时损失怎样下降。</p></div><span class="lab-tag">LOSS LAB</span></div>
+          <div class="control-row">
+            <label>正样本 dot <input id="positiveDot" type="range" min="-4" max="4" step="0.1" value="1.2"><output id="positiveDotOut">1.2</output></label>
+            <label>负样本 1 <input id="negativeDot1" type="range" min="-4" max="4" step="0.1" value="-0.6"><output id="negativeDot1Out">-0.6</output></label>
+            <label>负样本 2 <input id="negativeDot2" type="range" min="-4" max="4" step="0.1" value="0.2"><output id="negativeDot2Out">0.2</output></label>
+            <label>负样本 3 <input id="negativeDot3" type="range" min="-4" max="4" step="0.1" value="-1.1"><output id="negativeDot3Out">-1.1</output></label>
+          </div>
+          <div class="control-row"><button id="negativeGood" class="lab-button" type="button">加载较好状态</button><button id="negativeBad" class="lab-button" type="button">加载较差状态</button></div>
+          <div id="negativeBars" class="prob-grid"></div><div id="negativeResult" class="lab-output"></div>
+        </div>
+
+        <div class="tip-box"><strong>为什么相似词会靠近？这是合理推测，不是逐条硬规则</strong>如果“猫”和“狗”经常面对相似上下文词，它们必须产生相似的预测分布；共享低维参数会促使向量呈现相似几何结构。但语料偏差、频率、采样策略和维度都会影响结果，不能把单个余弦值当“语义真相”。</div>
+        <div class="quiz" id="quiz-word2vec" data-answer="b" data-good="答对：Skip-gram 从中心词预测窗口里的上下文词。" data-try="把两个名字拆开：Skip-gram 是从一个词向外预测。">
+          <h3>检索 2：Skip-gram 给定中心词，主要预测什么？</h3>
+          <div class="quiz-options"><button class="choice-button" data-choice="a">中心词语</button><button class="choice-button" data-choice="b">上下文词</button><button class="choice-button" data-choice="c">随机噪声</button></div><p class="quiz-feedback"></p>
+        </div>
+      </section>
+
+      <section id="glove" class="lesson-section">
+        <p class="section-kicker">关卡 3 · PDF p.3-4</p>
+        <h2>GloVe：先数全局共现，再拟合对数统计</h2>
+        <p class="lead">Word2Vec 在局部窗口上逐样本预测；GloVe 先把整个语料的窗口共现聚合成 <code>Xᵢⱼ</code>。它们使用的信息都来自共现，但优化接口不同。</p>
+        <div class="formula-card">J = Σ<sub>i,j</sub> f(X<sub>ij</sub>) · (w<sub>i</sub>·w̃<sub>j</sub> + b<sub>i</sub> + b̃<sub>j</sub> − log X<sub>ij</sub>)²<span class="formula-note">只有 Xᵢⱼ &gt; 0 的项进入标准目标；f(X) 限制超高频项的支配作用，并降低稀有共现的影响。</span></div>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动实验 4：从迷你语料构造共现矩阵</h3><p>点击任意单元格，再拖动“模型当前总分”，观察这一项的平方损失。</p></div><span class="lab-tag">GLOVE LAB</span></div>
+          <div class="concept-card"><strong>语料</strong><p>猫 喜欢 吃 鱼 ｜ 小猫 喜欢 吃 鱼 ｜ 狗 喜欢 吃 肉 ｜ 猫 和 狗 是 动物</p></div>
+          <div class="control-row">
+            <label>窗口半径 <input id="coocWindow" type="range" min="1" max="2" value="1"><output id="coocWindowOut">1</output></label>
+            <label>模型当前总分 <input id="glovePrediction" type="range" min="-2" max="3" step="0.1" value="0.4"><output id="glovePredictionOut">0.4</output></label>
+          </div>
+          <div id="coocTable" class="cooc-wrap"></div><div id="coocResult" class="lab-output"></div>
+          <p class="small">演示按距离使用 <code>1/distance</code> 加权，所以窗口为 2 时，隔一个词的共现加 0.5。不同实现可以选择其他计数细节。</p>
+        </div>
+
+        <table class="summary-table">
+          <thead><tr><th>维度</th><th>Word2Vec</th><th>GloVe</th></tr></thead>
+          <tbody><tr><td>训练输入</td><td>滑窗产生的正样本和噪声样本</td><td>聚合后的非零共现计数</td></tr><tr><td>典型目标</td><td>预测上下文 / 中心词；或正负二分类</td><td>加权拟合 <code>log Xᵢⱼ</code></td></tr><tr><td>参数</td><td>输入向量与输出向量</td><td>目标/上下文向量与两组偏置</td></tr><tr><td>“局部/全局”</td><td>每步使用局部窗口样本</td><td>训练项已聚合全语料计数</td></tr></tbody>
+        </table>
+        <div class="mistake-box"><strong>不要把“GloVe 通常更快/更好”当普遍事实</strong>这取决于语料规模、实现、硬件、词表、维度、评价任务和调参。课件 p.4 的比较适合作为历史直觉，不足以推出所有项目中的胜负。</div>
+        <div class="quiz" id="quiz-glove" data-answer="a" data-good="答对：严格说还包含偏置和频率权重，但核心拟合目标是共现计数的对数。" data-try="回到公式，观察平方括号里减去的量。">
+          <h3>检索 3：GloVe 的模型分数主要逼近什么？</h3>
+          <div class="quiz-options"><button class="choice-button" data-choice="a">共现对数</button><button class="choice-button" data-choice="b">词表编号</button><button class="choice-button" data-choice="c">句子长度</button></div><p class="quiz-feedback"></p>
+        </div>
+      </section>
+
+      <section id="transformer" class="lesson-section">
+        <p class="section-kicker">关卡 4 · PDF p.5-8</p>
+        <h2>Transformer：Embedding 是入口，hidden state 才是上下文表示</h2>
+        <p class="lead">BERT/GPT 不再用 Word2Vec 的独立目标预训练输入表，而是把 embedding 放进整台模型，让语言建模 loss 沿整条计算图反向传播。</p>
+
+        <div class="layer-track"><div class="layer-step"><strong>Token/Position</strong>静态查表</div><div class="layer-step"><strong>Layer 1</strong>读取邻近线索</div><div class="layer-step"><strong>Layer 2…N</strong>融合更多上下文</div><div class="layer-step"><strong>LM Head</strong>输出词表 logits</div></div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动实验 5：同一个“苹果”在哪里开始不同？</h3><p>切换句子：token embedding 分量保持相同；合成输入还可能因位置/句段而不同，层后 hidden state 则会读取上下文。</p></div><span class="lab-tag">CONTEXT LAB</span></div>
+          <div class="context-switch"><button class="context-card active" data-context-case="fruit" type="button"><strong>水果语境</strong><p>“我吃了一个苹果”</p></button><button class="context-card" data-context-case="company" type="button"><strong>公司语境</strong><p>“苹果发布了新手机”</p></button></div>
+          <div id="contextResult" class="lab-output"></div>
+        </div>
+
+        <h3>BERT 与 GPT：预测任务不同，梯度来源相同</h3>
+        <div class="objective-tabs"><button class="tab-button active" data-objective="bert" type="button">BERT / MLM</button><button class="tab-button" data-objective="gpt" type="button">GPT / Causal LM</button></div>
+        <div id="objectivePanel" class="objective-panel"></div>
+        <div class="truth-box"><strong>BERT 的一个关键梯度细节</strong>当输入位置被替换成 <code>[MASK]</code> 时，该位置前向输入的是 <code>[MASK]</code> 的向量，不是答案词向量。答案词的输入 embedding 仍可能通过它在其他未遮盖位置出现、以及输入/输出权重共享等路径得到更新；不能简单说“这个遮住词的 embedding 在该位置直接被修正”。</div>
+
+        <h3>子词 embedding：解决的不是“语义自动拼接”</h3>
+        <p>子词 tokenizer 在词表大小与序列长度之间折中。例如 <code>playing → play + ##ing</code>，两个子词各自查表，再由 Transformer 组合上下文。它提高新词和词形变化的覆盖，但不保证任意切分都自然，也不自动给出一个唯一“整词向量”。</p>
+        <div class="compare-grid"><div class="concept-card"><h3>保证可表示</h3><p>字节级 BPE 或明确的字符/字节回退可以把任意输入拆到底层单元。</p></div><div class="concept-card"><h3>仍可能未知</h3><p>没有完整基础字母表或回退机制的 WordPiece/BPE，仍可能输出 <code>[UNK]</code>。</p></div></div>
+        <div class="quiz" id="quiz-bert" data-answer="b" data-good="答对：这是“已被选中做 MLM 的位置”内部的 80% 分支。" data-try="15% 是先选位置；80/10/10 是对选中位置再分配。">
+          <h3>检索 4：原始 BERT 中，被选中做 MLM 的位置多数怎样处理？</h3>
+          <div class="quiz-options"><button class="choice-button" data-choice="a">全部遮盖</button><button class="choice-button" data-choice="b">八成遮盖</button><button class="choice-button" data-choice="c">全部保留</button></div><p class="quiz-feedback"></p>
+        </div>
+      </section>
+
+      <section id="training" class="lesson-section">
+        <p class="section-kicker">关卡 5 · PyTorch 训练循环</p>
+        <h2>一个 embedding 行究竟怎样被改动？</h2>
+        <p class="lead">训练不是“把词义写进向量”的神秘过程，而是反复执行：查表 → 算 logits → 算 loss → 求梯度 → 更新参数。</p>
+        <div class="shape-pipeline"><span class="shape-pill">zero_grad()</span><span class="shape-arrow">→</span><span class="shape-pill">forward()</span><span class="shape-arrow">→</span><span class="shape-pill">loss</span><span class="shape-arrow">→</span><span class="shape-pill">backward()</span><span class="shape-arrow">→</span><span class="shape-pill">step()</span></div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动实验 6：浏览器里真的做一次梯度更新</h3><p>这是一个 2 维 embedding + 2 类输出层。点“训练一步”，数字会按交叉熵梯度更新。</p></div><span class="lab-tag">TRAINING LAB</span></div>
+          <div class="control-row"><label>输入 token<select id="toyToken"><option value="0">猫（ID 0）</option><option value="1">狗（ID 1）</option><option value="2">鱼（ID 2）</option></select></label><label>正确类别<select id="toyTarget"><option value="0">类别 A</option><option value="1" selected>类别 B</option></select></label><label>学习率<input id="toyLr" type="range" min="0.05" max="1" value="0.5" step="0.05"></label><button id="toyStep" class="lab-button primary" type="button">训练一步</button><button id="toyReset" class="lab-button" type="button">重置参数</button></div>
+          <div id="trainingBoard" class="training-board"></div><div id="toyResult" class="lab-output"></div>
+          <p class="small">为了看清更新，演示不使用 AdamW，只做最基础的梯度下降。PyTorch 自动微分会得到同类梯度；优化器规则决定如何把梯度转成更新。</p>
+        </div>
+        <div class="fact-grid"><div class="concept-card"><h3><code>loss.backward()</code></h3><p>只计算并累积 <code>.grad</code>；参数数值还没变。</p></div><div class="concept-card"><h3><code>optimizer.step()</code></h3><p>读取梯度并真正修改参数，包括 embedding 与输出层。</p></div></div>
+        <div class="mistake-box"><strong>只更新被查到的行，不等于只有这些参数变化</strong>当前 batch 没出现的 embedding 行通常没有输入侧任务梯度；但输出层可能为许多或全部词产生梯度，输入/输出权重共享也会改变更新路径。若优化器使用解耦权重衰减（如 AdamW），即使任务梯度为 0，未命中行也可能因权重衰减而发生微小变化。</div>
+
+        <h3>四段最小 PyTorch 代码</h3>
+        <div class="code-tabs"><button class="tab-button active" data-code-example="lookup" type="button">Embedding 查表</button><button class="tab-button" data-code-example="cbow" type="button">CBOW</button><button class="tab-button" data-code-example="skipgram" type="button">Skip-gram NS</button><button class="tab-button" data-code-example="transformer" type="button">Transformer 输入</button></div>
+        <div id="embeddingCodePanel" class="code-panel"></div>
+        <p>项目中已有可运行版本：<a href="../code/embedding_training_demo.py"><code>code/embedding_training_demo.py</code></a>。推荐先运行 <code>python code\embedding_training_demo.py --steps 400</code>，再把 <code>dim=16</code> 改成 2，观察容量降低后相似度是否稳定。</p>
+        <div class="quiz" id="quiz-step" data-answer="c" data-good="答对：backward 求梯度，step 才真正改权重。" data-try="区分“算出方向”和“沿方向移动”两个动作。">
+          <h3>检索 5：训练循环中，哪一步真正改变参数值？</h3>
+          <div class="quiz-options"><button class="choice-button" data-choice="a">向前计算</button><button class="choice-button" data-choice="b">反向求导</button><button class="choice-button" data-choice="c">参数更新</button></div><p class="quiz-feedback"></p>
+        </div>
+      </section>
+
+      <section id="pitfalls" class="lesson-section">
+        <p class="section-kicker">关卡 6 · 易错点</p>
+        <h2>六个新手最容易带走的错误结论</h2>
+        <table class="summary-table">
+          <thead><tr><th>错误想法</th><th>为什么错</th><th>正确检查方式</th></tr></thead>
+          <tbody>
+            <tr><td>“ID 之间有远近”</td><td>ID 只是行号；更换词表顺序不会改变语义。</td><td>比较向量前先确认同一模型、同一层和同一归一化方法。</td></tr>
+            <tr><td>“Embedding 自己理解上下文”</td><td>输入查表没有读取别的 token。</td><td>问清对象是 <code>embedding.weight</code> 还是层后 <code>hidden_states</code>。</td></tr>
+            <tr><td>“余弦相似就是词义真值”</td><td>结果受语料、频率、偏差和层选择影响。</td><td>把它当模型行为测量，并在任务数据上验证。</td></tr>
+            <tr><td>“负采样只是少算几个类别”</td><td>它改变了训练目标，并引入噪声分布与输入/输出双表。</td><td>明确写出正负 sigmoid 目标与采样分布。</td></tr>
+            <tr><td>“BERT 的 [MASK] 词向量被直接修正”</td><td>该输入位置看到的是 [MASK] 向量；答案用于 loss。</td><td>沿计算图追踪输入、输出层和权重共享。</td></tr>
+            <tr><td>“子词永远没有 OOV”</td><td>是否保证覆盖取决于基础字母表和回退机制。</td><td>用罕见字符、emoji、混合脚本做 tokenizer 测试。</td></tr>
+          </tbody>
+        </table>
+        <div class="quiz" id="quiz-subword" data-answer="a" data-good="答对：能保证覆盖的是底层字节/字符回退，不是“子词”这个名称本身。" data-try="问自己：算法遇到词表之外的字符时，最后还能退到什么单位？">
+          <h3>检索 6：哪种设计最能保证任意文本都有可用 token？</h3>
+          <div class="quiz-options"><button class="choice-button" data-choice="a">字节保底</button><button class="choice-button" data-choice="b">所有方法</button><button class="choice-button" data-choice="c">英文专属</button></div><p class="quiz-feedback"></p>
+        </div>
+      </section>
+
+      <section id="practice" class="lesson-section">
+        <p class="section-kicker">关卡 7 · 深入理解与长期记忆</p>
+        <h2>先尝试回答，再展开思路</h2>
+        <p class="lead">这些题没有单一关键词答案，目标是检查你能否沿数据流解释。建议先用自己的话说 30 秒，再点“显示思路”。</p>
+
+        <div class="deep-question"><h3>题 1：为什么两个从未同时出现的词，最后仍可能向量相近？</h3><p>请从“共享上下文”和“共享参数”解释，不要只回答“因为语义相近”。</p><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">它们不必直接共现。如果 A 和 B 都经常与一组相似上下文 C、D、E 共现，那么为了产生相似预测分布，优化器可能把 A、B 的输入向量推到相近区域。这是分布假设的体现，但不是数学保证。</div></div>
+        <div class="deep-question"><h3>题 2：BERT 句子中的“苹果”为什么能变化，而 embedding 表的“苹果”又不变化？</h3><p>至少说出两个不同时间尺度：一次 forward 内、很多训练 step 之间。</p><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">一次 forward 内，同一参数表在两个位置查出的输入行相同，但两条上下文经过注意力后得到不同 hidden state。跨训练 step 看，优化器会缓慢修改参数表本身；下一次 forward 再查表时，所有语境共享这个更新后的起点。</div></div>
+        <div class="deep-question"><h3>题 3：如果把 embedding 维度从 128 增到 4096，会必然更好吗？</h3><p>请给出至少三个可能的代价或反例。</p><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">不必然。参数量和显存近似随 <code>V×C</code> 增长；计算成本也上升；小语料更易过拟合；优化更难；下游模型的维度必须匹配；若任务信号不足，多出的维度不一定学到稳定结构。要在验证集与资源预算下比较。</div></div>
+        <div class="deep-question"><h3>题 4：怎样证明“loss 下降”不是模型只在背训练语料？</h3><p>设计一个最小实验，说明数据划分、指标和预期现象。</p><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">保留未参与训练的验证句子，固定 tokenizer 与词表，同时记录 train/validation loss，并用新上下文做最近邻或预测测试。训练 loss 降而验证 loss 升通常提示过拟合；两者都下降才更支持泛化，但仍要看任务指标和误差案例。</div></div>
+
+        <h3>四次复习安排（建立存储强度）</h3>
+        <div class="review-plan"><div class="review-day"><strong>今天</strong><p>完成 6 道检索题；运行一次 CBOW demo。</p></div><div class="review-day"><strong>明天</strong><p>不看页面画出 [B,T]→[B,T,C] 和训练五步。</p></div><div class="review-day"><strong>第 3 天</strong><p>交错比较 Word2Vec、GloVe、BERT、GPT。</p></div><div class="review-day"><strong>第 7 天</strong><p>修改维度/窗口/步数，先预测再运行验证。</p></div></div>
+
+        <h3>一页速查与一手来源</h3>
+        <ul class="source-list">
+          <li><a href="../reference/embedding-training-cheatsheet.html">Embedding 训练速查表</a>：形状、目标函数、训练循环与误区。</li>
+          <li><a href="0008-cbow-code-reading.html"><code>embedding_training_demo.py</code> 逐行互动课</a>：细讲 Python 语法、Module、张量形状、梯度与代码审计。</li>
+          <li><a href="https://research.google/pubs/efficient-estimation-of-word-representations-in-vector-space/">Mikolov et al. (2013), Efficient Estimation of Word Representations</a>：CBOW 与 Skip-gram 的原始架构。</li>
+          <li><a href="https://papers.nips.cc/paper/2013/hash/9aa42b31882ec039965f3c4923ce901b-Abstract.html">Mikolov et al. (2013), Distributed Representations of Words and Phrases</a>：负采样与高频词下采样。</li>
+          <li><a href="https://aclanthology.org/D14-1162/">Pennington et al. (2014), GloVe</a>：加权共现目标。</li>
+          <li><a href="https://aclanthology.org/N19-1423/">Devlin et al. (2019), BERT</a>：MLM、NSP 与 80/10/10 细节。</li>
+          <li><a href="https://cdn.openai.com/better-language-models/language-models.pdf">Radford et al. (2019), GPT-2 report</a>：自回归语言模型。</li>
+          <li><a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.modules.sparse.Embedding.html">PyTorch <code>nn.Embedding</code> 官方文档</a>：参数、形状与稀疏梯度选项。</li>
+        </ul>
+        <div class="lesson-actions"><a href="../index.html">返回课程主页</a><a class="secondary" href="0006-b-t-c-h-tensor-shapes.html">复习 B / T / C / H</a><a class="secondary" href="0008-cbow-code-reading.html">下一步：逐行读 CBOW 代码</a></div>
+        <div class="tip-box"><strong>继续向我提问</strong>如果某道题卡住，请直接告诉我“关卡编号 + 你目前的理解”。我可以按你的答案继续出变式题，或带你逐行运行 <code>embedding_training_demo.py</code>。</div>
+      </section>
+    </article>
+  </main>
+  <script src="../assets/embedding-course.js"></script>
+</body>
+</html>
