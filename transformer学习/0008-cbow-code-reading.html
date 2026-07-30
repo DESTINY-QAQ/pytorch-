@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="面向 Python 与 PyTorch 新手的 embedding_training_demo.py 逐行互动讲解：语法、张量形状、CBOW、自动微分、代码审计与练习。">
+  <title>逐行读懂 CBOW 训练代码｜Python × PyTorch 新手课</title>
+  <link rel="stylesheet" href="../assets/course.css">
+  <link rel="stylesheet" href="../assets/embedding-course.css">
+  <link rel="stylesheet" href="../assets/code-reading.css">
+</head>
+<body class="embedding-course code-reading">
+  <header class="embedding-hero code-hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Lesson 08 · 逐行读代码 · Python / PyTorch 新手</p>
+        <h1>86 行代码，读懂一次完整训练</h1>
+        <p class="hero-lead">围绕 <code>embedding_training_demo.py</code>，从冒号、缩进、<code>self</code> 和推导式讲到张量形状、自动微分、AdamW 与余弦相似度。每一层解释都落到这份源码的真实数字上。</p>
+        <div class="hero-badges"><span class="hero-badge">9 个源码块</span><span class="hero-badge">8 个互动实验</span><span class="hero-badge">6 道即时反馈题</span><span class="hero-badge">含数据缺陷审计</span></div>
+      </div>
+      <div class="mini-terminal" aria-label="运行流程预览">
+        <div class="terminal-dots"><i></i><i></i><i></i></div>
+        <div><span class="muted">$</span> python code\embedding_training_demo.py --steps 400</div>
+        <div><span class="cyan">tokens</span> = 1760</div>
+        <div><span class="cyan">vocab</span> = 12</div>
+        <div><span class="orange">contexts</span> = [1758, 2]</div>
+        <div><span class="orange">logits</span> = [1758, 12]</div>
+        <div><span class="muted">loss.backward() → optimizer.step()</span></div>
+      </div>
+    </div>
+  </header>
+  <div class="course-progress" aria-hidden="true"><span id="codeProgressFill"></span></div>
+
+  <main class="wrap embedding-layout">
+    <aside class="embedding-sidebar" aria-label="课程导航">
+      <h2>学习路线</h2>
+      <nav>
+        <a href="#map" class="active">0. 先看全貌</a>
+        <a href="#explorer">1. 逐块读源码</a>
+        <a href="#python">2. Python 语法</a>
+        <a href="#data">3. 数据怎样流动</a>
+        <a href="#model">4. 模型与形状</a>
+        <a href="#training">5. 训练与梯度</a>
+        <a href="#similarity">6. 相似度检查</a>
+        <a href="#audit">7. 代码审计</a>
+        <a href="#practice">8. 题目与迁移</a>
+      </nav>
+      <div class="checkpoint">
+        <label><input type="checkbox" data-code-check="syntax"> 能解释 self / super / 缩进</label>
+        <label><input type="checkbox" data-code-check="data"> 能展开 5 个数据处理表达式</label>
+        <label><input type="checkbox" data-code-check="shape"> 会追踪 5 个张量形状</label>
+        <label><input type="checkbox" data-code-check="grad"> 能区分 backward 与 step</label>
+        <label><input type="checkbox" data-code-check="bug"> 能说明跨句样本缺陷</label>
+        <label><input type="checkbox" data-code-check="transfer"> 能独立改窗口或维度</label>
+        <p id="codeProgressText" class="small">已完成 0 / 12 个检查点</p>
+      </div>
+      <a class="sidebar-download" href="../reference/python-pytorch-code-reading-cheatsheet.html">打开一页语法速查</a>
+    </aside>
+
+    <article class="embedding-sheet">
+      <section id="map" class="lesson-section">
+        <p class="section-kicker">关卡 0 · 先建立正确地图</p>
+        <h2>这是一份 CBOW 教学代码，不是一份 Transformer</h2>
+        <p class="lead">它完成了一个真正可训练的神经网络：用中心词左右各一个词，预测中心词。但它没有位置编码、Self-Attention、Transformer Block 或上下文化 hidden state。把它看成“理解 Transformer 训练前，先拆开最小齿轮”最准确。</p>
+
+        <div class="fact-grid">
+          <div class="concept-card"><h3>已确认：它确实会学习参数</h3><p><code>nn.Embedding</code> 与 <code>nn.Linear</code> 都有可训练权重；交叉熵产生梯度，AdamW 修改这些权重。</p></div>
+          <div class="concept-card"><h3>已确认：它是浅层 CBOW</h3><p>两个 context 向量直接求平均，再做一次线性分类。左右次序被平均操作抹掉。</p></div>
+          <div class="concept-card"><h3>不能推出：输出是真实词义</h3><p>语料只有 5 个不同句子，且被机械重复。最近邻只能用来检查训练流程，不能当语言学结论。</p></div>
+          <div class="concept-card"><h3>审计发现：数据边界有缺陷</h3><p>源码先拼平所有句子，798 条样本跨越句界，占全部 1758 条的 45.4%。后文会把它算清楚。</p></div>
+        </div>
+
+        <div class="flow-river" aria-label="整份代码的数据流">
+          <div class="flow-node"><strong>字符串列表</strong>400 句</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>tokens</strong>1760 词</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>stoi / ids</strong>12 词表项</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>contexts</strong>[1758,2]</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>Embedding</strong>[1758,2,16]</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>mean</strong>[1758,16]</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>logits</strong>[1758,12]</div><div class="flow-arrow">→</div>
+          <div class="flow-node"><strong>loss</strong>标量</div>
+        </div>
+        <div class="truth-box"><strong>先记一句总纲</strong>Python 负责“组织步骤和对象”；Tensor 负责“装数字”；Module 负责“登记可训练参数和前向计算”；Autograd 负责“求梯度”；Optimizer 负责“按梯度改参数”。</div>
+      </section>
+
+      <section id="explorer" class="lesson-section">
+        <p class="section-kicker">关卡 1 · 源码浏览器</p>
+        <h2>先按职责切成 9 块，再逐行读</h2>
+        <p class="lead">点击上方块名。左侧保留源码行号，右侧同时解释 Python 语法、运行时动作、张量/数据和易错点。不要试图第一次就从第 1 行一路背到第 86 行。</p>
+        <div class="code-overview" role="tablist" aria-label="源码分块">
+          <button class="active" type="button"><strong>01</strong>入口与导入</button><button type="button"><strong>02</strong>微型语料</button><button type="button"><strong>03</strong>造训练样本</button><button type="button"><strong>04</strong>定义模型</button><button type="button"><strong>05</strong>前向传播</button><button type="button"><strong>06</strong>数据预处理</button><button type="button"><strong>07</strong>训练循环</button><button type="button"><strong>08</strong>相似度检查</button><button type="button"><strong>09</strong>脚本入口</button>
+        </div>
+        <div class="source-explorer">
+          <div id="sourceCode" class="source-code" aria-label="源码片段"></div>
+          <div id="explainPanel" class="explain-panel" aria-live="polite"></div>
+        </div>
+        <div class="tip-box"><strong>阅读策略</strong>遇到一行代码，固定问四件事：① 输入名字是什么类型？② 这行返回什么？③ 形状是否改变？④ 它会不会修改对象状态？这比只背 API 名称更能迁移到新代码。</div>
+      </section>
+
+      <section id="python" class="lesson-section">
+        <p class="section-kicker">关卡 2 · Python 语法显微镜</p>
+        <h2>符号不是装饰：它们决定代码的结构</h2>
+        <div class="syntax-lab">
+          <h3>点一个符号，看它在本文件中的角色</h3>
+          <div class="syntax-buttons">
+            <button class="active" data-syntax="def" type="button">def</button><button data-syntax="colon" type="button">:</button><button data-syntax="indent" type="button">缩进</button><button data-syntax="arrow" type="button">-&gt;</button><button data-syntax="self" type="button">self</button><button data-syntax="super" type="button">super()</button><button data-syntax="dot" type="button">.</button><button data-syntax="brackets" type="button">[] () {}</button><button data-syntax="at" type="button">@</button><button data-syntax="with" type="button">with</button><button data-syntax="fstring" type="button">f""</button><button data-syntax="arithmetic" type="button">// %</button>
+          </div>
+          <div id="syntaxResult" class="syntax-result" aria-live="polite"></div>
+        </div>
+
+        <h3>四种“定义”和“执行”不要混</h3>
+        <table class="summary-table">
+          <thead><tr><th>源码写法</th><th>看到这行时</th><th>什么时候真正执行内部逻辑</th></tr></thead>
+          <tbody>
+            <tr><td><code>def build_examples(...):</code></td><td>创建函数对象</td><td>调用 <code>build_examples(ids)</code> 时</td></tr>
+            <tr><td><code>class CBOW(...):</code></td><td>创建类对象</td><td><code>CBOW(len(vocab))</code> 创建实例时运行 <code>__init__</code></td></tr>
+            <tr><td><code>model(contexts)</code></td><td>调用 Module 实例</td><td>Module 的包装逻辑再调用 <code>forward</code></td></tr>
+            <tr><td><code>if __name__ == "__main__":</code></td><td>判断运行方式</td><td>只有直接运行文件时进入；import 时跳过</td></tr>
+          </tbody>
+        </table>
+
+        <div class="compare-grid">
+          <div class="concept-card"><h3><code>=</code> 与 <code>==</code></h3><p><code>=</code> 把右边对象绑定给左边名字；<code>==</code> 比较两个值是否相等。<code>step == 1</code> 绝不是赋值。</p></div>
+          <div class="concept-card"><h3>可变列表与不可变整数</h3><p><code>append</code> 会原地修改列表；<code>i + 1</code> 创建新整数值。理解“是否原地修改”对读训练代码很重要。</p></div>
+          <div class="concept-card"><h3>类型提示不是运行检查</h3><p><code>steps: int</code> 能帮助 IDE 与人阅读；如果直接调用 <code>main("400")</code>，Python 不会仅凭注解自动拒绝。</p></div>
+          <div class="concept-card"><h3>点号后的名字来自对象</h3><p><code>torch.optim.AdamW</code> 是模块层层访问；<code>loss.item()</code> 是 Tensor 的方法；<code>parsed.steps</code> 是命令行结果的属性。</p></div>
+        </div>
+        <p class="small">Python 对 class、实例方法与 <code>self</code> 的正式说明见 <a href="https://docs.python.org/3/tutorial/classes.html">Python Classes 教程</a>；命令行解析见 <a href="https://docs.python.org/3/library/argparse.html">argparse 文档</a>。</p>
+      </section>
+
+      <section id="data" class="lesson-section">
+        <p class="section-kicker">关卡 3 · 从字符串到监督学习样本</p>
+        <h2>最密集的 Python 语法，集中在 5 行预处理里</h2>
+        <p>点击左侧表达式，把“聪明的一行”展开为普通循环。推导式不是新算法，只是更紧凑的写法。</p>
+        <div class="expand-lab">
+          <div class="expand-buttons"><button class="active" data-expand="join" type="button">join / split</button><button data-expand="vocab" type="button">sorted(set)</button><button data-expand="stoi" type="button">stoi 推导式</button><button data-expand="itos" type="button">itos 推导式</button><button data-expand="ids" type="button">ids 推导式</button></div>
+          <div id="expandCode" class="expand-code" aria-live="polite"></div>
+        </div>
+
+        <h3>用一条句子手工走完 <code>build_examples</code></h3>
+        <pre><code>句子 tokens： [猫, 喜欢, 吃, 鱼]
+对应 IDs：    [8,   3,   1, 11]
+
+i = 1：context = [8, 1]  → target = 3     # [猫, 吃] → 喜欢
+i = 2：context = [3, 11] → target = 1     # [喜欢, 鱼] → 吃
+
+contexts = [[8, 1], [3, 11]]   # shape [2,2]
+targets  = [3, 1]               # shape [2]</code></pre>
+        <div class="callout"><strong>为什么不让 i 从 0 开始？</strong>i=0 没有左邻居；i=n−1 没有右邻居。<code>range(1, len(token_ids)-1)</code> 正好只访问有完整两侧上下文的位置。</div>
+
+        <h3>关键审计：句子边界被删除了</h3>
+        <div class="training-tabs"><button class="active" data-boundary-mode="current" type="button">看当前源码</button><button data-boundary-mode="corrected" type="button">看正确分句</button></div>
+        <div id="boundaryStage" class="boundary-stage" aria-live="polite"></div>
+        <div class="mistake-box"><strong>这里要直接纠正一个容易忽略的前提</strong>“这是教学玩具”可以解释语料小，却不能自动让跨句伪样本变正确。它们会教模型虚构的相邻关系，且比例高达 45.4%。因此最近邻输出不仅不代表真实词义，也混入了错误的数据信号。</div>
+
+        <h3>如果修复，数据构造应保留句界</h3>
+        <pre><code>context_parts, target_parts = [], []
+for sentence in SENTENCES:
+    sentence_ids = [stoi[word] for word in sentence.split()]
+    c, t = build_examples(sentence_ids)
+    context_parts.append(c)
+    target_parts.append(t)
+
+contexts = torch.cat(context_parts, dim=0)  # [960, 2]
+targets = torch.cat(target_parts, dim=0)    # [960]</code></pre>
+        <p class="small">这段是讲解中的修正方案，原始 <code>embedding_training_demo.py</code> 未被改动。另一个边界情况：若传入少于 3 个 ID，原函数会得到形状 <code>[0]</code> 的空 context Tensor，而不是预期的 <code>[0,2]</code>；Embedding 随后给出 <code>[0,D]</code>，mean 又变为 <code>[0]</code>，最终 Linear 因最后一维不是 D 而失败。</p>
+      </section>
+
+      <section id="model" class="lesson-section">
+        <p class="section-kicker">关卡 4 · nn.Module 与张量形状</p>
+        <h2>模型不是“一个公式”，而是两张参数表加一条数据路线</h2>
+        <div class="shape-pipeline"><span class="shape-pill">IDs [B,2]</span><span class="shape-arrow">→</span><span class="shape-pill">查表 [B,2,D]</span><span class="shape-arrow">→</span><span class="shape-pill">平均 [B,D]</span><span class="shape-arrow">→</span><span class="shape-pill">Linear [B,V]</span></div>
+
+        <h3>互动：逐步追踪本文件的真实形状</h3>
+        <div class="shape-stepper">
+          <button class="shape-step active" type="button"><strong>1</strong>输入 IDs</button><button class="shape-step" type="button"><strong>2</strong>查 Embedding</button><button class="shape-step" type="button"><strong>3</strong>上下文平均</button><button class="shape-step" type="button"><strong>4</strong>Linear 投影</button><button class="shape-step" type="button"><strong>5</strong>交叉熵</button>
+        </div>
+        <div id="shapeDetail" class="shape-detail" aria-live="polite"></div>
+
+        <table class="axis-table"><thead><tr><th>字母</th><th>本例实际值</th><th>含义</th><th>在哪一行消失/出现</th></tr></thead><tbody><tr><td><strong>B / N</strong></td><td>1758</td><td>训练样本数；这里全量一次送入，不是常见小批次</td><td>交叉熵默认 mean 后消失</td></tr><tr><td><strong>2</strong></td><td>2</td><td>左右两个 context 位置</td><td><code>mean(dim=1)</code> 后消失</td></tr><tr><td><strong>D</strong></td><td>16</td><td>每个词向量的维度</td><td>Embedding 添加，Linear 消耗</td></tr><tr><td><strong>V</strong></td><td>12</td><td>词表大小，也是分类类别数</td><td>Linear 输出端出现</td></tr></tbody></table>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动：V 和 D 改变时，参数量如何变？</h3><p>拖动词表大小和向量维度。该模型有两张 <code>[V,D]</code> 权重，Linear 另有 V 个偏置。</p></div><span class="lab-tag">PARAMETER LAB</span></div>
+          <div class="param-lab">
+            <div class="param-controls"><label>词表 V <input id="vocabSlider" type="range" min="4" max="500" value="12"><output id="vocabOut">12</output></label><label>维度 D <input id="dimSlider" type="range" min="2" max="128" value="16"><output id="dimOut">16</output></label></div>
+            <div id="paramBars" class="param-bars"></div>
+          </div>
+          <p class="small">源码默认 V=12、D=16，所以总参数为 12×16 + 12×16 + 12 = <strong>396</strong>。</p>
+        </div>
+
+        <div class="compare-grid">
+          <div class="concept-card"><h3><code>nn.Embedding(V,D)</code></h3><p>把整数 ID 当行号查参数矩阵。输入任意形状 <code>*</code>，输出在末尾追加 D：<code>* → *,D</code>。</p></div>
+          <div class="concept-card"><h3><code>nn.Linear(D,V)</code></h3><p>对最后一维做 <code>y=xAᵀ+b</code>，保留前面的 batch 维。其权重布局是 <code>[out,in]=[V,D]</code>。</p></div>
+          <div class="concept-card"><h3><code>mean(dim=1)</code></h3><p>dim 从 0 数起：0 是样本轴，1 是两个 context，2 是向量分量。沿 dim=1 平均后它消失。</p></div>
+          <div class="concept-card"><h3><code>model(contexts)</code></h3><p>不要习惯直接调用 <code>model.forward(...)</code>。Module 的调用包装负责钩子等机制，然后才进入 forward。</p></div>
+        </div>
+        <p class="small">以上行为可在 <a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.Module.html">nn.Module</a>、<a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.modules.sparse.Embedding.html">nn.Embedding</a> 与 <a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.Linear.html">nn.Linear</a> 官方文档核对。</p>
+      </section>
+
+      <section id="training" class="lesson-section">
+        <p class="section-kicker">关卡 5 · 训练循环与自动微分</p>
+        <h2>预测、评分、归因、更新：四件事不要揉成一件</h2>
+        <div class="training-tabs"><button class="active" data-train="zero" type="button">0. zero_grad</button><button data-train="forward" type="button">1. forward</button><button data-train="loss" type="button">2. loss</button><button data-train="backward" type="button">3. backward</button><button data-train="step" type="button">4. step</button></div>
+        <div id="trainingDetail" class="training-detail" aria-live="polite"></div>
+
+        <h3>一条样本的交叉熵，手算到数字</h3>
+        <pre><code>假设三个类别的 logits = [2.0, 1.0, 0.0]，正确类别是 0
+softmax 后概率       ≈ [0.665, 0.245, 0.090]
+loss = -log(0.665)   ≈ 0.408
+
+若把正确类别 logit 从 2.0 提高到 3.0：
+正确概率变大 → loss 变小 → 这是梯度希望推动的方向</code></pre>
+        <div class="callout warning"><strong>高频错误：先 softmax 再交叉熵。</strong><code>F.cross_entropy</code> 需要原始、未归一化 logits，并内部进行数值稳定的 log-softmax 组合。把概率再传进去会改变目标并降低数值稳定性。</div>
+
+        <div class="fact-grid">
+          <div class="concept-card"><h3>为什么先重置梯度？</h3><p>PyTorch 默认把新梯度累加到已有 <code>.grad</code>。普通训练每轮要先重置；当前 <code>zero_grad()</code> 默认将它设为 None，只有 <code>set_to_none=False</code> 才填零。</p></div>
+          <div class="concept-card"><h3>为什么 loss 是标量？</h3><p>源码的交叉熵默认对 1758 个样本求平均。标量方便从一个总目标反向传播。</p></div>
+          <div class="concept-card"><h3>为什么 <code>item()</code>？</h3><p>它从单元素 Tensor 取出普通 Python 数字，便于格式化打印；它不参与后面的梯度计算。</p></div>
+          <div class="concept-card"><h3>AdamW 还做了什么？</h3><p>除自适应更新外，源码省略的 <code>weight_decay</code> 使用默认值 0.01。想明确教学行为，最好显式写出。</p></div>
+        </div>
+
+        <h3>打印条件也值得逐符号读</h3>
+        <pre><code>if step == 1 or step % max(1, steps // 5) == 0:
+    print(f"step {step:>4}/{steps}: loss={loss.item():.4f}")
+
+steps = 400 时：steps // 5 = 80
+因此在 step 1、80、160、240、320、400 打印
+:&gt;4  → 宽度 4、右对齐          :.4f → 小数点后 4 位</code></pre>
+        <div class="callout"><strong>时间点细节：</strong>这里打印的 <code>loss</code> 来自本轮 <code>optimizer.step()</code> 之前那次 forward。<code>step()</code> 已更新参数，但 <code>loss.item()</code> 只是读取旧 loss Tensor 的数值，不会用新参数自动重算。</div>
+        <p class="small">交叉熵输入/目标形状见 <a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.functional.cross_entropy.html">F.cross_entropy 官方文档</a>；梯度重置的默认行为见 <a href="https://docs.pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html">Optimizer.zero_grad 官方文档</a>；AdamW 默认项见 <a href="https://docs.pytorch.org/docs/2.13/generated/torch.optim.AdamW.html">AdamW 官方文档</a>。</p>
+      </section>
+
+      <section id="similarity" class="lesson-section">
+        <p class="section-kicker">关卡 6 · 从向量到最近邻</p>
+        <h2><code>normalize + @ + topk</code> 在做什么？</h2>
+        <div class="formula">余弦相似度(a,b) = (a·b) / (‖a‖₂‖b‖₂)；若两者先单位化，就只剩 a·b</div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动：观察“自身”为什么总排第一</h3><p>下面使用明确标注的人工向量，只演示运算，不冒充脚本训练结果。</p></div><span class="lab-tag">COSINE LAB</span></div>
+          <div class="control-row"><label>查询词<select id="simQuery"><option>猫</option><option>狗</option><option>鱼</option></select></label><label class="toggle-label"><input id="excludeSelf" type="checkbox"> 排除查询词自身</label></div>
+          <div class="similarity-stage"><div id="simTable"></div><div><h3>Top-4</h3><div id="rankList" class="rank-list"></div></div></div>
+        </div>
+
+        <div class="compare-grid">
+          <div class="concept-card"><h3><code>with torch.no_grad()</code></h3><p>临时不记录梯度，适合检查/推理。它不冻结参数、不会清空旧梯度，也不等同于 <code>model.eval()</code>。</p></div>
+          <div class="concept-card"><h3><code>dim=-1</code></h3><p><code>-1</code> 表示最后一个轴。对 <code>[V,D]</code> 的最后轴归一化，就是让每个词向量各自长度为 1。</p></div>
+          <div class="concept-card"><h3><code>vectors @ vectors[id]</code></h3><p><code>[V,D] @ [D] → [V]</code>，一次得到查询词与词表全部行的相似度。</p></div>
+          <div class="concept-card"><h3><code>topk(...).indices.tolist()</code></h3><p>先取 Top-K 结果对象的索引 Tensor，再转成 Python 列表，随后用 <code>itos[i]</code> 还原词。</p></div>
+        </div>
+        <div class="mistake-box"><strong>三个不同开关</strong><code>no_grad()</code> 控制是否建求导图；<code>zero_grad()</code> 清参数已有梯度；<code>model.eval()</code> 切换 Dropout/BatchNorm 等层的训练行为。本模型只有 Embedding 和 Linear，因此 eval 不会改变输出，但概念仍不能混。</div>
+        <p class="small"><a href="https://docs.pytorch.org/docs/2.13/generated/torch.no_grad.html">no_grad</a>、<a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.functional.normalize.html">normalize</a> 与 <a href="https://docs.pytorch.org/docs/2.13/generated/torch.topk.html">topk</a> 的官方说明。</p>
+      </section>
+
+      <section id="audit" class="lesson-section">
+        <p class="section-kicker">关卡 7 · 像工程师一样审计代码</p>
+        <h2>区分“明确缺陷”“教学简化”和“不能从结果推出的结论”</h2>
+        <div class="audit-stack">
+          <div class="audit-item critical"><span class="tag">明确缺陷 · 高影响</span><h3>句子边界丢失</h3><p>798 条伪样本，占 45.4%。这会改变训练分布，应该按句分别构造窗口后再拼 Tensor。</p></div>
+          <div class="audit-item critical"><span class="tag">明确缺陷 · 边界输入</span><h3>steps≤0 与短 token 列表没有校验</h3><p><code>--steps 0</code> 会输出未训练向量；少于 3 个 ID 会生成错误形状的空 context。更稳的代码应提前 <code>raise ValueError</code>。</p></div>
+          <div class="audit-item"><span class="tag">展示偏差</span><h3>Top-K 默认包含查询词</h3><p>自身相似度约为 1。若目标是找“其他近邻”，应先把查询位置分数设为 <code>-inf</code> 或多取一个后过滤。</p></div>
+          <div class="audit-item"><span class="tag">未显式参数</span><h3>AdamW 默认权重衰减 0.01</h3><p>源码只写了学习率，不代表没有权重衰减。教学代码显式写 <code>weight_decay=0.01</code> 或 0 更清楚。</p></div>
+          <div class="audit-item"><span class="tag">合理简化</span><h3>全量 batch、无验证集、无 DataLoader</h3><p>用于看懂 API 可以接受；若目标变成可靠训练，就需要 mini-batch、shuffle、验证集、设备管理、checkpoint 与更大语料。</p></div>
+          <div class="audit-item"><span class="tag">模型边界</span><h3>没有词序、未知词和上下文表示</h3><p>mean 让左右顺序不可辨；词表外输入会 KeyError；一个词只有一行静态输入向量。这些都是 CBOW 与 Transformer 的结构差异。</p></div>
+          <div class="audit-item"><span class="tag">进阶 API 陷阱</span><h3>不要只把 Embedding 改成 <code>sparse=True</code></h3><p>这会让其权重得到稀疏梯度，而 AdamW 不在官方列出的稀疏梯度优化器中；需要同时选择受支持的优化器并重新确认其余参数的优化方式。</p></div>
+          <div class="audit-item"><span class="tag">可复现性边界</span><h3>manual_seed 不是跨平台位级保证</h3><p>固定随机种子能让同环境中的初始化更可重复，但不同 PyTorch 版本、设备或非确定性算法仍可能产生差异。</p></div>
+          <div class="audit-item"><span class="tag">参数语义</span><h3>输入表与输出层是两张权重</h3><p><code>model.embedding.weight</code> 是输入词向量；<code>model.output.weight</code> 是分类权重。两者形状都为 [V,D]，但参数独立，源码最终只检查前者。</p></div>
+        </div>
+
+        <h3>本示例与 Transformer 的边界</h3>
+        <table class="summary-table"><thead><tr><th>问题</th><th>这份 CBOW</th><th>Transformer 语言模型</th></tr></thead><tbody><tr><td>输入次序</td><td>求平均后丢失左右次序</td><td>使用位置机制保留次序</td></tr><tr><td>上下文读取</td><td>固定左右各 1 个词</td><td>注意力可按权重读取多个位置</td></tr><tr><td>词的表示</td><td>静态 embedding 行</td><td>层后 hidden state 随上下文变化</td></tr><tr><td>训练目标</td><td>上下文预测中心词</td><td>常见为下一 token 或 masked token</td></tr><tr><td>网络深度</td><td>Embedding + Linear</td><td>多层 Attention + FFN + 残差 + 归一化</td></tr></tbody></table>
+      </section>
+
+      <section id="practice" class="lesson-section">
+        <p class="section-kicker">关卡 8 · 即时检索与迁移题</p>
+        <h2>先选答案，再看反馈</h2>
+        <div class="code-quiz-grid">
+          <div class="quiz" id="code-quiz-type" data-answer="b" data-good="正确：注解主要帮助阅读器、IDE 与类型检查器；Python 不会据此自动校验。" data-try="再想想：运行时是谁把 --steps 的文本转换为 int？"><h3><code>steps: int</code> 的主要作用？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">运行校验</button><button class="choice-button" data-choice="b">阅读提示</button><button class="choice-button" data-choice="c">自动转换</button></div><p class="quiz-feedback" aria-live="polite"></p></div>
+          <div class="quiz" id="code-quiz-self" data-answer="c" data-good="正确：赋给 self 的 Module 会成为当前模型的已注册子层。" data-try="forward 是另一阶段；这里仍在 __init__。"><h3><code>self.output = nn.Linear(...)</code> 最关键的效果？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">运行前向</button><button class="choice-button" data-choice="b">清空梯度</button><button class="choice-button" data-choice="c">注册子层</button></div><p class="quiz-feedback" aria-live="polite"></p></div>
+          <div class="quiz" id="code-quiz-mean" data-answer="a" data-good="正确：[B,2,D] 的 dim=1 是两个上下文位置。" data-try="从 0 开始给 [B,2,D] 三个轴编号。"><h3><code>mean(dim=1)</code> 消掉哪个轴？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">上下文轴</button><button class="choice-button" data-choice="b">批次维度</button><button class="choice-button" data-choice="c">词表维度</button></div><p class="quiz-feedback" aria-live="polite"></p></div>
+          <div class="quiz" id="code-quiz-backward" data-answer="c" data-good="正确：backward 计算并累积梯度，step 才改参数。" data-try="区分“算出修改方向”和“真的移动参数”。"><h3><code>loss.backward()</code> 直接做什么？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">修改参数</button><button class="choice-button" data-choice="b">生成样本</button><button class="choice-button" data-choice="c">计算梯度</button></div><p class="quiz-feedback" aria-live="polite"></p></div>
+          <div class="quiz" id="code-quiz-no-grad" data-answer="b" data-good="正确：no_grad 暂停记录求导图，不会冻结权重或自动 eval。" data-try="它控制的是“是否记录求导过程”，不是永久冻结参数。"><h3><code>torch.no_grad()</code> 的作用？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">冻结权重</button><button class="choice-button" data-choice="b">关闭建图</button><button class="choice-button" data-choice="c">切换评估</button></div><p class="quiz-feedback" aria-live="polite"></p></div>
+          <div class="quiz" id="code-quiz-topk" data-answer="a" data-good="正确：源码只按分数取 Top-K，没有主动过滤查询位置。" data-try="topk 只按数值排序，不知道“邻居”是否应该排除自己。"><h3>源码是否主动排除查询词自身？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">没有排除</button><button class="choice-button" data-choice="b">已经排除</button><button class="choice-button" data-choice="c">随机排除</button></div><p class="quiz-feedback" aria-live="polite"></p></div>
+        </div>
+
+        <h2>深入题：先用自己的话说 30 秒</h2>
+        <div class="challenge"><h3>题 1：为什么把 5 个句子重复 80 次，不等于模型看到了更多语言规律？</h3><p>请同时考虑“独特样本数”和默认 mean loss。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">重复不会创造新的词或上下文。若按句正确构造、全量计算并对所有样本取平均，每条样本重复相同次数时，平均梯度与只用一份几乎相同；主要增加计算量。当前源码因跨句拼接，还额外重复了错误边界模式。</div></div>
+        <div class="challenge"><h3>题 2：为什么 <code>mean(dim=1)</code> 让 [猫, 吃] 与 [吃, 猫] 完全无法区分？</h3><p>请用加法交换律解释。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">两者分别得到 (E猫+E吃)/2 与 (E吃+E猫)/2；加法满足交换律，所以结果完全相同。若需要区分左右，可分别投影、拼接，或加入位置表示/注意力机制。</div></div>
+        <div class="challenge"><h3>题 3：为什么 Linear 权重会为许多词得到梯度，而输入 Embedding 通常只更新被查到的行？</h3><p>沿前向图比较“查表”和“全词表分类”。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">Embedding 前向只读取 context IDs 对应的行，任务梯度沿这些查表路径返回。Linear 为每个样本输出全部 V 个 logits，交叉熵对多个类别的 logit 都有梯度，所以输出权重的许多行会参与更新。默认 dense Embedding 中，整张 Parameter 的 <code>.grad</code> 存在而未命中行可为零；AdamW 仍可对这些行施加权重衰减。若某个完整 Parameter 的 <code>.grad is None</code>，优化器通常跳过它。</div></div>
+        <div class="challenge"><h3>题 4：若想把 context 从左右各 1 个词改为左右各 2 个词，哪些地方必须同步变化？</h3><p>至少回答样本构造、输入形状、mean 和边界。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">循环应写成 <code>range(2, len(token_ids) - 2)</code>，实际产生索引 2…n−3；每条 context 收集 i−2、i−1、i+1、i+2，形状变成 [B,4]；Embedding 输出 [B,4,D]；仍可对 dim=1 求平均；每句少于 5 个词时没有样本，且仍必须逐句处理边界。</div></div>
+        <div class="challenge"><h3>题 5：如何证明 loss 下降不是“学会真实词义”？</h3><p>设计一个最小验证，而不是只看训练打印。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">保留未参与训练的新句子或新上下文，分别记录 train/validation loss；再设计不依赖训练句复述的类比、最近邻或预测任务，并与随机/频率基线比较。训练 loss 下降只确认模型更会拟合训练目标，不足以证明泛化或语义有效。</div></div>
+
+        <h3>建议的动手顺序</h3>
+        <ol class="recipe-list"><li>不改代码，先在纸上写出一句话的两个 CBOW 样本和形状。</li><li>运行 1 step、5 steps、400 steps，记录 loss；先预测再看结果。</li><li>打印 <code>len(tokens)</code>、<code>len(vocab)</code>、<code>contexts.shape</code>，核对 1760、12、[1758,2]。</li><li>按本课修复句界，再核对样本数变为 960；比较修复前后的最近邻。</li><li>显式设置 <code>weight_decay=0</code> 与 0.01，说明这是控制变量实验。</li><li>最后才改 context 窗口与 D；每次只改一个变量并保留记录。</li></ol>
+
+        <h3>配套资料与一手来源</h3>
+        <ul class="source-list code-source-list">
+          <li><a href="../code/embedding_training_demo.py">原始 Python 源码</a>：本课逐行分析对象，未被修改。</li>
+          <li><a href="../reference/python-pytorch-code-reading-cheatsheet.html">Python / PyTorch 代码阅读速查</a>：符号、形状、训练五步与审计清单。</li>
+          <li><a href="0007-embedding-training-deep-dive.html">Embedding 训练深度课</a>：补齐 Word2Vec、GloVe、BERT/GPT 的概念背景。</li>
+          <li><a href="https://docs.python.org/3/tutorial/classes.html">Python Classes</a> 与 <a href="https://docs.python.org/3/library/argparse.html">argparse</a>：语法与命令行的一手说明。</li>
+          <li><a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.Module.html">PyTorch nn.Module</a>、<a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.modules.sparse.Embedding.html">Embedding</a>、<a href="https://docs.pytorch.org/docs/2.13/generated/torch.nn.functional.cross_entropy.html">cross_entropy</a> 与 <a href="https://docs.pytorch.org/docs/2.13/generated/torch.optim.AdamW.html">AdamW</a>。</li>
+        </ul>
+        <div class="lesson-actions"><a href="../index.html">返回课程主页</a><a class="secondary" href="0007-embedding-training-deep-dive.html">复习 Embedding 概念</a><a class="secondary" href="../reference/python-pytorch-code-reading-cheatsheet.html">打开一页速查</a></div>
+        <div class="tip-box"><strong>怎样继续问我</strong>可以直接给“源码行号 + 你不明白的符号”，例如：“第 56 行中 <code>word: i</code> 为什么有冒号？”我会先把一行展开成普通循环，再追踪每个变量的具体值。</div>
+      </section>
+    </article>
+  </main>
+  <script src="../assets/code-reading.js"></script>
+</body>
+</html>

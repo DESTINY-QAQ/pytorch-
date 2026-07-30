@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="面向 Python 与 PyTorch 新手的 MoE 专家网络、门控路由、Top-K、容量与负载均衡互动课程">
+  <title>Lesson 09｜MoE 路由与负载均衡深度互动课</title>
+  <link rel="stylesheet" href="../assets/course.css">
+  <link rel="stylesheet" href="../assets/embedding-course.css">
+  <link rel="stylesheet" href="../assets/moe-course.css">
+</head>
+<body class="embedding-course moe-course">
+  <header class="embedding-hero moe-hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">LESSON 09 · PDF 深度讲解 · PYTHON / PYTORCH 新手</p>
+        <h1><span class="moe-title-line">MoE：不是</span><span class="moe-title-line">“很多模型一起算”</span><span class="moe-title-line">而是每个 token</span><span class="moe-title-line">只叫少数专家</span></h1>
+        <p class="hero-lead">从普通 FFN 出发，亲手走完 <strong>router logits → softmax → Top-K → token 分派 → 专家计算 → 加权合并</strong>，再用容量桶、负载损失与 z-loss 看清 MoE 为什么难训练、难部署。</p>
+        <div class="hero-badges"><span class="hero-badge">9 个小关卡</span><span class="hero-badge">5 个互动实验</span><span class="hero-badge">6 道即时题</span><span class="hero-badge">2 道数值挑战</span></div>
+        <div class="course-meta"><span>核心约 55 分钟</span><span>工程拓展约 20 分钟</span><span>完全离线可用</span></div>
+      </div>
+      <div class="moe-orbit" aria-label="一个路由器从六位专家中激活两位的示意图">
+        <span class="moe-orbit-line l0"></span><span class="moe-orbit-line l1"></span><span class="moe-orbit-line l2"></span><span class="moe-orbit-line l3"></span><span class="moe-orbit-line l4"></span><span class="moe-orbit-line l5"></span>
+        <div class="moe-router-core">Router<small>Top-2</small></div>
+        <div class="moe-expert-node e0 active">E0</div><div class="moe-expert-node e1">E1</div><div class="moe-expert-node e2">E2</div><div class="moe-expert-node e3 active">E3</div><div class="moe-expert-node e4">E4</div><div class="moe-expert-node e5">E5</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="course-progress" aria-hidden="true"><span id="moeProgressFill"></span></div>
+
+  <div class="wrap embedding-layout">
+    <aside class="embedding-sidebar">
+      <h2>课程导航</h2>
+      <nav aria-label="本课章节">
+        <a href="#audit">0. 先校准 PDF</a>
+        <a href="#expert">1. 专家到底是什么</a>
+        <a href="#route">2. 完整路由流水线</a>
+        <a href="#topk">3. 算一次 Top-K</a>
+        <a href="#capacity">4. 形状、容量与均衡</a>
+        <a href="#training">5. 梯度与稳定性</a>
+        <a href="#code">6. 逐行读 PyTorch</a>
+        <a href="#systems">7. 模型与工程边界</a>
+        <a href="#practice">8. 易错题与迁移</a>
+      </nav>
+      <div class="checkpoint">
+        <h2>我的学习关卡</h2>
+        <label><input type="checkbox" data-chapter-check="audit"> 能识别 PDF 的事实边界</label>
+        <label><input type="checkbox" data-chapter-check="expert"> 能区分 Attention 与 MoE</label>
+        <label><input type="checkbox" data-chapter-check="route"> 能口述六步数据流</label>
+        <label><input type="checkbox" data-chapter-check="topk"> 能手算 Top-K 混合</label>
+        <label><input type="checkbox" data-chapter-check="capacity"> 能算容量与溢出</label>
+        <label><input type="checkbox" data-chapter-check="training"> 能区分两种辅助损失</label>
+        <label><input type="checkbox" data-chapter-check="code"> 能追踪 PyTorch 形状</label>
+        <label><input type="checkbox" data-chapter-check="systems"> 能说出工程代价</label>
+        <label><input type="checkbox" data-chapter-check="practice"> 完成最后挑战</label>
+        <p id="moeProgressText" class="progress-copy">已完成 0 / 9 个关卡</p>
+        <button id="resetMoeProgress" class="reset-progress" type="button">清空本课记录</button>
+      </div>
+    </aside>
+
+    <main class="embedding-main">
+      <section class="lesson-section" id="audit">
+        <p class="section-kicker">第 0 关 · PDF 阅读校准</p>
+        <h2>这份 PDF 是一张不错的地图，但不是可直接照抄的教材</h2>
+        <p class="lead">已确认原文件共 8 页：前半解释专家、门控、Top-K 与负载均衡，后半介绍 GShard、Switch、DeepSpeed-MoE、Tutel 和工程挑战。它没有 PyTorch 代码，也没有参考文献列表；因此本课会把“PDF 的说法”和“一手论文确认的事实”分开。</p>
+
+        <div class="boundary-banner"><span class="boundary-icon">!</span><p><strong>本课范围：</strong>讲主流的 token-choice sparse MoE。不同模型在 softmax 与 Top-K 的顺序、K=1 的权重、第二专家、容量、溢出和均衡损失上并不完全相同；一段教学代码不能反推为所有 MoE 的定义。</p></div>
+
+        <div class="evidence-legend"><span class="evidence-chip confirmed">一手来源已确认</span><span class="evidence-chip bounded">需限定适用条件</span><span class="evidence-chip unverified">PDF 中缺少可核来源</span></div>
+
+        <div class="fact-grid">
+          <article class="concept-card good"><h3>已确认的主干</h3><p>MoE 通常替换 Transformer block 的 FFN/MLP；router 逐 token 打分；Top-K 只执行少数专家；输出按 gate 权重合并。</p></article>
+          <article class="concept-card warn"><h3>必须加条件的话</h3><p>“总参数很大、单 token 计算近似受控”成立于 K 和专家宽度固定的比较；router、padding、内存与通信并不免费。</p></article>
+          <article class="concept-card warn"><h3>PDF 中的明确问题</h3><p>p2 图把 PaLM 2 列为 MoE 成功案例，但官方技术报告没有把 PaLM 2 描述为稀疏 MoE；本课不沿用这项归类。</p></article>
+          <article class="concept-card blue"><h3>暂不当作核心事实</h3><p>p3–p4 的“2023–2025 综述”没有完整题名或引用，正文也没有明确的 2025 工作；精确性能数字需回到原论文语境。</p></article>
+        </div>
+
+        <h3>8 页原文怎样读</h3>
+        <div class="pdf-map">
+          <details><summary><span class="pdf-page">p1</span>目录与学习地图</summary><p>只是导航页。先抓住四个核心词：Expert、Router、Top-K、Load Balance。</p></details>
+          <details open><summary><span class="pdf-page">p2</span>总览图、专家网络、门控路由</summary><p>建立主流程。图里的“2/8 专家激活”只描述专家 FFN 部分，不等于整个模型只计算 25%；Attention、归一化和其他共享层仍要运行。</p></details>
+          <details><summary><span class="pdf-page">p3</span>Top-K、负载均衡、论文综述开头</summary><p>重点是“每个 token 独立选 K 位专家”。负载均衡防止流量塌缩，但不保证专家形成可解释的数学/代码分工。</p></details>
+          <details><summary><span class="pdf-page">p4</span>2023–2024 工作摘要</summary><p>作为延伸阅读线索即可。原文重复介绍 AdaMoE，并残留 Markdown 标记；作者姓氏式引用不足以唯一定位论文。</p></details>
+          <details><summary><span class="pdf-page">p5</span>Mixtral 式结构图与 GShard</summary><p>概念图显示共享 self-attention 加 MoE-FFN。中间粗黑条只是原图分隔，不是一层网络；图也省略了真实归一化与残差细节。</p></details>
+          <details><summary><span class="pdf-page">p6</span>Switch、DeepSpeed-MoE、Tutel</summary><p>要区分算法与系统：Switch 主要简化到 Top-1；DeepSpeed/Tutel 更强调训练、推理与通信系统。</p></details>
+          <details><summary><span class="pdf-page">p7</span>通信开销与训练不稳定</summary><p>多设备专家并行常需要 all-to-all 交换 token activation。单 GPU 教学实现看不到这项主要成本。</p></details>
+          <details><summary><span class="pdf-page">p8</span>冷启动与 Token–Expert 映射</summary><p>“分不到 token → 学不到 → 更难被选”会形成恶性循环。MegaBlocks 等 dropless 方法说明固定容量与丢弃并非 MoE 的必然定义。</p></details>
+        </div>
+
+        <details class="answer-key" open>
+          <summary>展开核对：p3–p4“2023–2025 最新综述”逐条辨伪</summary>
+          <div class="table-scroll"><table class="audit-table"><thead><tr><th>PDF 条目</th><th>一手来源核对</th><th>应怎样修正理解</th></tr></thead><tbody>
+            <tr><td>AdaMoE</td><td><a href="https://aclanthology.org/2024.findings-emnlp.361/">Findings EMNLP 2024</a></td><td>Null experts 让真实专家激活数可按 token 变化。PDF 后面又以 Zeng 等重复介绍同一论文；ARC-C 是该微调设置中的 +1.69 个百分点，不是通用收益。</td></tr>
+            <tr><td>Skywork-MoE</td><td><a href="https://arxiv.org/abs/2406.06563">2024 技术报告</a></td><td>最终模型为 146B total / 22B active，13B 是初始化 dense checkpoint。logit normalization 是把过平、高熵 gate 变得更尖锐，PDF 的解释方向相反。</td></tr>
+            <tr><td>Yuan 2.0-M32</td><td><a href="https://arxiv.org/abs/2405.17976">2024 技术报告</a></td><td>Attention Router 建模的是同一 token 下专家—专家相关性，不是 token 之间的 attention；性能改善是论文报告的实验结果。</td></tr>
+            <tr><td>Chi 等</td><td><a href="https://arxiv.org/abs/2204.09179">NeurIPS 2022</a></td><td>并非 PDF 所写的 ACL 2023。X-MOE 使用低维投影、L2 归一化与可学习温度缓解 representation collapse。</td></tr>
+            <tr><td>Cai 等</td><td><a href="https://proceedings.mlr.press/v235/cai24e.html">Flextron, ICML 2024</a></td><td>并非 NeurIPS 2023，也不是标准 FFN-expert MoE；它按延迟目标路由弹性宽度/注意力头子网络，surrogate model 只是训练流程的一部分。</td></tr>
+            <tr><td>Hash routing</td><td><a href="https://proceedings.neurips.cc/paper/2021/hash/92bf5e6240737e0326ea59846a83e076-Abstract.html">Hash Layers, NeurIPS 2021</a></td><td>这是独立背景工作，不是 AdaMoE 的贡献，也不能泛化成所有非训练路由都自动均衡。</td></tr>
+          </tbody></table></div>
+          <p class="source-note"><strong>结论：</strong>这部分没有 2025 工作；可确认条目跨 2021、2022、2024，且混入非标准 MoE 的 Flextron。适合作为“继续阅读线索”，不适合作为按年份整理的可靠综述。</p>
+        </details>
+
+        <div class="tip-box"><strong>建议先读哪篇一手资料？</strong>新手优先读 <a href="https://www.jmlr.org/papers/v23/21-0998.html">Switch Transformer</a> 的第 2 节：Top-1、expert capacity 与辅助负载损失都给出了明确公式和图。原 PDF 可在这里打开：<a href="../../【Transformer基础-4】MOE架构中的专家网络、门控路由、Top-K 激活、负载均衡（拓展阅读，不用掌握）.pdf">MoE 原课件</a>。</div>
+      </section>
+
+      <section class="lesson-section" id="expert">
+        <p class="section-kicker">第 1 关 · 先找准被替换的零件</p>
+        <h2>MoE 通常不替换 Attention，而是把一个 FFN 换成多个 FFN</h2>
+        <p class="lead">Attention 让不同 token 互相读取信息；FFN 对每个 token 的 hidden state 独立做非线性变换。主流 Transformer MoE 把第二部分变成“多个参数互不相同的 FFN + 一个路由器”。</p>
+
+        <div class="block-anatomy">
+          <article class="block-part attention"><h3>共享 Attention</h3><p>输入/输出常见形状：<code>[B,T,C]</code></p><p>任务：让当前位置读取上下文。</p><p>所有 token 都经过这套共享参数。</p></article>
+          <div class="block-arrow">→</div>
+          <article class="block-part ffn"><h3>FFN 或 MoE-FFN</h3><p>逐 token 变换，形状仍为 <code>[B,T,C]</code></p><p>Dense：每个 token 用同一套 FFN。</p><p>MoE：每个 token 只用 K 套专家 FFN。</p></article>
+        </div>
+        <div class="swap-strip"><div class="swap-node">Dense FFN<br><code>FFN(x)</code></div><b>替换为 →</b><div class="swap-node moe">Router + E 个 Expert FFN<br><code>Σ gᵢ(x)Eᵢ(x)</code></div></div>
+
+        <h3>一位“专家”内部是什么？</h3>
+        <pre><code>class Expert(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, 4 * dim),  # [*, C] → [*, 4C]
+            nn.GELU(),                # 非线性
+            nn.Linear(4 * dim, dim),  # [*, 4C] → [*, C]
+        )
+
+    def forward(self, x):
+        return self.net(x)</code></pre>
+        <p>它不是一个完整聊天模型，也不是人工预先命名的“数学教授”。多位专家结构可以相同，但参数各自独立。训练可能形成某种分工，也可能只表现出句法或位置偏好；<strong>负载均衡保证的是使用机会，不是语义专长</strong>。</p>
+
+        <div class="truth-box"><strong>具体例子</strong>句子“我 用 Python 写 循环”经过 Attention 后，每个 token 已带有上下文。MoE 会对“我”“Python”“写”“循环”的 hidden state 分别路由；四个 token 可以选不同专家，同一个 token 在下一层也可以改选其他专家。</div>
+        <div class="mistake-box"><strong>常见误解：MoE 就是模型集成</strong>普通 ensemble 往往让多个完整模型都计算，再平均最终预测；稀疏 MoE 是一个模型内部的条件计算层，通常只执行被路由到的少数 FFN 子网。</div>
+
+        <div class="quiz" id="quiz-expert" data-answer="a" data-good="答对：主流 Transformer MoE 通常替换 FFN/MLP 子层。" data-try="再看 block 分工：谁负责逐 token 的非线性变换？">
+          <h3>即时回忆：MoE 通常替换哪个部分？</h3>
+          <div class="quiz-options"><button class="choice-button" type="button" data-choice="a">前馈网络子层</button><button class="choice-button" type="button" data-choice="b">多头注意子层</button><button class="choice-button" type="button" data-choice="c">输入分词模块</button></div>
+          <p class="quiz-feedback" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="route">
+        <p class="section-kicker">第 2 关 · 数据流</p>
+        <h2>从 <code>[B,T,C]</code> 到专家，再原样回到 <code>[B,T,C]</code></h2>
+        <p class="lead">先不要背公式。按顺序点击六步，始终问三个问题：现在一行代表谁？最后一维代表什么？下一步为什么能接上？</p>
+
+        <div class="route-stepper">
+          <div class="route-buttons">
+            <button class="route-button active" type="button"><span>1</span>摊平 token</button>
+            <button class="route-button" type="button"><span>2</span>router 打分</button>
+            <button class="route-button" type="button"><span>3</span>softmax</button>
+            <button class="route-button" type="button"><span>4</span>Top-K</button>
+            <button class="route-button" type="button"><span>5</span>专家计算</button>
+            <button class="route-button" type="button"><span>6</span>合并恢复</button>
+          </div>
+          <div id="routePanel" class="route-panel" aria-live="polite"></div>
+        </div>
+
+        <div class="formula-card">z = W<sub>r</sub>x &nbsp;→&nbsp; p = softmax(z) &nbsp;→&nbsp; S = TopK(p) &nbsp;→&nbsp; y = Σ<sub>i∈S</sub> w<sub>i</sub>E<sub>i</sub>(x)<span class="formula-note">z 是 router logits；p 是专家维的路由概率/权重；S 是离散专家索引；w 是最终混合权重。</span></div>
+
+        <div class="concept-grid">
+          <article class="concept-card blue"><h3>离散的部分</h3><p><code>TopK</code> 产生专家索引。索引跳变，不能像普通连续函数那样直接求导。</p></article>
+          <article class="concept-card good"><h3>连续的部分</h3><p>被选中的 gate 权重、专家 FFN、主损失和辅助概率项仍可传梯度；所以“Top-K 不可微”不等于 router 完全不能训练。</p></article>
+        </div>
+
+        <div class="quiz" id="quiz-token-choice" data-answer="a" data-good="答对：Top-K 是每个 token 沿专家维独立选择。" data-try="注意 [N,E] 的每一行属于一个 token。">
+          <h3>Top-K 在这里到底选择什么？</h3>
+          <div class="quiz-options"><button class="choice-button" type="button" data-choice="a">每词选择专家</button><button class="choice-button" type="button" data-choice="b">每层选择词元</button><button class="choice-button" type="button" data-choice="c">每批选择神经</button></div>
+          <p class="quiz-feedback" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="topk">
+        <p class="section-kicker">第 3 关 · 互动数值实验</p>
+        <h2>亲手算一次 logits → softmax → Top-K → 加权输出</h2>
+        <p>下面把专家输出简化成一维数：<code>E0(x)=10</code>、<code>E1(x)=-2</code>、<code>E2(x)=4</code>、<code>E3(x)=1</code>。真实模型输出是 C 维向量，但加权规则完全相同。</p>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>实验 A：单 token 路由器</h3><p>拖动 raw logits，切换 Top-1/Top-2 与两种权重约定。先预测入选专家，再看结果。</p></div><span class="lab-tag">即时反馈</span></div>
+          <div class="router-controls">
+            <label class="router-control">E0 <input class="moe-router-logit" type="range" min="-4" max="4" step="0.1" value="2"><output>2.0</output></label>
+            <label class="router-control">E1 <input class="moe-router-logit" type="range" min="-4" max="4" step="0.1" value="1"><output>1.0</output></label>
+            <label class="router-control">E2 <input class="moe-router-logit" type="range" min="-4" max="4" step="0.1" value="0"><output>0.0</output></label>
+            <label class="router-control">E3 <input class="moe-router-logit" type="range" min="-4" max="4" step="0.1" value="-1"><output>-1.0</output></label>
+          </div>
+          <div class="control-row">
+            <label>权重约定<select id="routerMode"><option value="renorm">Top-K 内重归一化</option><option value="switch">Switch top-1 保留 p</option></select></label>
+            <label>K<select id="routerK"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>
+            <button id="routerPresetClear" class="lab-button" type="button">恢复 [2,1,0,-1]</button>
+            <button id="routerPresetBalanced" class="lab-button" type="button">设为完全同分</button>
+          </div>
+          <div id="routerProbabilityList" class="router-prob-list" aria-label="各专家路由概率与最终权重"></div>
+          <div id="expertValueCards" class="expert-values"></div>
+          <div id="routerSummary" class="router-summary"></div>
+          <div id="routerResult" class="lab-output" aria-live="polite"></div>
+          <p id="routerGradientWarning" class="router-warning" hidden></p>
+        </div>
+
+        <div class="truth-box"><strong>两种写法不要混为一个定义</strong>“先全 softmax、取 Top-K、再把入选概率除以它们的和”在数值上等于“把未入选 logits 设为 −∞ 后 softmax”。但 Switch top-1 保留全 softmax 的最高概率，不把唯一权重强制变成 1。</div>
+        <div class="mistake-box"><strong>logit 不是“专家答对概率”</strong>它只是线性 router 给出的相对打分；softmax 也只是把这些分数归一化。模型最终是否答对由完整网络和任务 loss 决定。</div>
+
+        <div class="deep-question"><h3>深入想一层：为什么 Top-1 内重归一化会有梯度陷阱？</h3><p>先自己写出一个数的 softmax。</p><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">只有一个入选 logit 时，selected-softmax 永远等于 1；把该权重乘专家输出，主任务对这条权重路径的导数为 0。argmax 索引本身又离散。Switch-style 保留全 softmax 的 <code>p_top1</code>，并加入经平均概率 P 回传的负载辅助项。</div></div>
+      </section>
+
+      <section class="lesson-section" id="capacity">
+        <p class="section-kicker">第 4 关 · 张量、拥堵与均衡</p>
+        <h2>一条形状链解决代码问题，一只容量桶解释系统问题</h2>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>实验 B：形状与参数近似</h3><p>改动 B、T、C、E、K 与 d_ff，观察什么随专家数增长，什么只随 K 增长。</p></div><span class="lab-tag">形状追踪</span></div>
+          <div class="control-row">
+            <label>Batch B<input id="shapeB" type="number" min="1" max="64" value="2"></label>
+            <label>长度 T<input id="shapeT" type="number" min="1" max="1024" value="3"></label>
+            <label>维度 C<input id="shapeC" type="number" min="1" max="8192" value="8"></label>
+            <label>专家 E<input id="shapeE" type="number" min="1" max="128" value="4"></label>
+            <label>激活 K<input id="shapeK" type="number" min="1" max="8" value="2"></label>
+            <label>FFN d_ff<input id="shapeDff" type="number" min="1" max="32768" value="32"></label>
+          </div>
+          <div class="tensor-board">
+            <div class="tensor-card"><strong id="shapeX">[2,3,8]</strong><span>原输入</span><code>x</code></div>
+            <div class="tensor-card"><strong id="shapeFlat">[6,8]</strong><span>每行一 token</span><code>flat</code></div>
+            <div class="tensor-card"><strong id="shapeLogits">[6,4]</strong><span>每列一专家</span><code>probs</code></div>
+            <div class="tensor-card"><strong id="shapeTop">[6,2]</strong><span>每行 K 个 ID</span><code>top_ids</code></div>
+            <div class="tensor-card"><strong id="shapeY">[2,3,8]</strong><span>合并并恢复</span><code>output</code></div>
+          </div>
+          <div id="tensorShapeResult" class="lab-output" aria-live="polite"></div>
+        </div>
+
+        <h3>为什么需要 expert capacity？</h3>
+        <p>分布式系统喜欢固定形状的批量计算。Switch top-1 的经典容量近似为：</p>
+        <div class="formula-card">C = ceil((本批 token 数 T / 专家数 E) × capacity factor)<span class="formula-note">CF &gt; 1 留缓冲，减少 overflow；代价是更多空槽位、内存、计算与通信。一般 Top-K 的容量定义会随实现变化。</span></div>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>实验 C：12 个 token 进入 4 个专家</h3><p>切换路由分布并调 capacity factor。红色 token 只跳过本次专家计算，仍走 residual。</p></div><span class="lab-tag">容量桶</span></div>
+          <div class="control-row">
+            <label>路由分布<select id="capacityPattern"><option value="balanced">均衡 3/3/3/3</option><option value="mixed">轻微偏斜 5/3/2/2</option><option value="skewed" selected>明显偏斜 7/3/2/0</option><option value="collapsed">路由塌缩 10/2/0/0</option></select></label>
+            <label>capacity factor <input id="capacityFactor" type="range" min="1" max="2" step="0.25" value="1"><output id="capacityFactorOut">1</output></label>
+          </div>
+          <div id="capacityBuckets" class="capacity-grid"></div>
+          <div id="capacitySummary" class="capacity-summary"></div>
+          <div id="loadVectors" class="load-vectors"></div>
+          <div id="capacityResult" class="lab-output" aria-live="polite"></div>
+          <div id="residualLane" class="residual-lane"></div>
+        </div>
+
+        <h3>Switch 负载均衡损失到底在算什么？</h3>
+        <div class="formula-card">L<sub>balance</sub> = α · E · Σ<sub>i=1…E</sub> f<sub>i</sub>P<sub>i</sub><span class="formula-note">fᵢ：硬分派给专家 i 的 token 比例；Pᵢ：该批 token 对专家 i 的平均 softmax 概率。f 不可微，梯度可经 P 回到 router。均匀时无系数分数 EΣfP=1。</span></div>
+        <p>它不是要求每个很小的 batch 机械地绝对平均，而是在训练尺度上惩罚持续拥堵。系数 α 太小可能压不住塌缩；太大又可能干扰主任务。Switch 论文使用 0.01 是那组实验的选择，不是宇宙常数。</p>
+
+        <div class="quiz" id="quiz-overflow" data-answer="a" data-good="答对：经典 Switch 中溢出 token 跳过 expert，但残差仍保留表示。" data-try="被丢弃的是专家计算，不是 token 本身。">
+          <h3>容量溢出的 token 会怎样？</h3>
+          <div class="quiz-options"><button class="choice-button" type="button" data-choice="a">仍经残差前行</button><button class="choice-button" type="button" data-choice="b">从序列中删除</button><button class="choice-button" type="button" data-choice="c">改送全部专家</button></div>
+          <p class="quiz-feedback" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="training">
+        <p class="section-kicker">第 5 关 · 梯度与稳定性</p>
+        <h2>Balance loss 管“大家有没有活干”，z-loss 管“router 数字别爆”</h2>
+        <div class="formula-card">L<sub>total</sub> = L<sub>task</sub> + c<sub>B</sub>L<sub>balance</sub> + c<sub>z</sub>L<sub>z</sub><span class="formula-note">三项职责不同：完成任务、分配流量、约束 router 数值尺度。</span></div>
+
+        <div class="compare-grid">
+          <article class="concept-card good"><h3>负载均衡损失</h3><p>抑制 router 长期把 token 都送给少数专家，减少死专家、硬件闲置和容量溢出。</p><p><strong>不保证：</strong>专家一定语义多样。</p></article>
+          <article class="concept-card blue"><h3>Router z-loss</h3><p><code>mean(logsumexp(logits)²)</code> 抑制过大的 log-partition，提高指数运算的数值稳定性。</p><p><strong>不负责：</strong>均匀分配专家。</p></article>
+        </div>
+
+        <div class="lab">
+          <div class="lab-header"><div><h3>实验 D：概率不变，z-loss 可以差一百倍</h3><p>给所有 logits 同加一个常数，softmax 不变；拖动滑杆观察 z-loss。</p></div><span class="lab-tag">ST-MoE</span></div>
+          <div class="z-layout">
+            <div id="zGauge" class="z-gauge"><strong>当前 z-loss</strong><span id="zLossNumber" class="z-number">0</span><span>softmax <code id="zProbability">[]</code></span></div>
+            <div>
+              <div class="control-row"><label>共同平移 <input id="zShift" type="range" min="-12" max="3" step="0.1" value="0"><output id="zShiftOut">0</output></label><button id="zMakeSafe" class="lab-button" type="button">移到 logsumexp≈0</button></div>
+              <div id="zResult" class="lab-output" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+
+        <h3>一条 token 的梯度会流向哪里？</h3>
+        <div class="table-scroll"><table class="summary-table"><thead><tr><th>组件</th><th>这条 token 是否更新它</th><th>原因</th></tr></thead><tbody><tr><td>被选专家</td><td><span class="status-ok">通常会</span></td><td>它的输出参与 task loss。</td></tr><tr><td>未选专家</td><td><span class="status-care">这条 token 不会</span></td><td>没有执行；但可从其他 token 得到梯度。</td></tr><tr><td>Router gate value</td><td><span class="status-ok">可更新</span></td><td>连续权重与辅助概率项可传梯度。</td></tr><tr><td>Top-K 索引</td><td><span class="status-fix">不可直接求导</span></td><td>离散选择会跳变。</td></tr></tbody></table></div>
+
+        <div class="mistake-box"><strong>冷启动、死专家、路由塌缩不是完全同义</strong>冷启动强调训练早期或新专家没数据；死专家描述长期几乎不用；路由塌缩是大量 token 集中到少数专家的整体状态。它们会互相强化，但诊断和修复不能只靠一个词。</div>
+
+        <div class="quiz" id="quiz-zloss" data-answer="a" data-good="答对：z-loss 约束 router 的 log-partition 与数值尺度。" data-try="均衡流量是 balance loss 的职责。">
+          <h3>z-loss 的主要目的是什么？</h3>
+          <div class="quiz-options"><button class="choice-button" type="button" data-choice="a">约束数值尺度</button><button class="choice-button" type="button" data-choice="b">平衡专家流量</button><button class="choice-button" type="button" data-choice="c">增加专家数量</button></div>
+          <p class="quiz-feedback" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="code">
+        <p class="section-kicker">第 6 关 · Python / PyTorch 逐行课</p>
+        <h2>把公式落到 <code>moe_router_demo.py</code></h2>
+        <p class="lead">点击步骤，左侧会高亮对应代码，右侧同时解释 Python 写法与张量形状。完整可运行文件：<a href="../code/moe_router_demo.py">code/moe_router_demo.py</a>。</p>
+
+        <div class="code-step-buttons" aria-label="代码讲解步骤">
+          <button class="code-step-button active" type="button">1. 安装模块</button><button class="code-step-button" type="button">2. 摊平</button><button class="code-step-button" type="button">3. 路由</button><button class="code-step-button" type="button">4. 分派</button><button class="code-step-button" type="button">5. 加权</button><button class="code-step-button" type="button">6. 返回</button>
+        </div>
+        <div class="code-walkthrough">
+          <div class="code-stage"><pre><code><span class="code-line" data-line="1" data-code-group="expert">class Expert(nn.Module):</span>
+<span class="code-line" data-line="2" data-code-group="expert">    def __init__(self, dim):</span>
+<span class="code-line" data-line="3" data-code-group="expert">        super().__init__()</span>
+<span class="code-line" data-line="4" data-code-group="expert">        self.net = nn.Sequential(</span>
+<span class="code-line" data-line="5" data-code-group="expert">            nn.Linear(dim, 4 * dim), nn.GELU(),</span>
+<span class="code-line" data-line="6" data-code-group="expert">            nn.Linear(4 * dim, dim))</span>
+<span class="code-line" data-line="7" data-code-group="expert">    def forward(self, x):</span>
+<span class="code-line" data-line="8" data-code-group="expert">        return self.net(x)</span>
+<span class="code-line" data-line="9" data-code-group="init"></span>
+<span class="code-line" data-line="10" data-code-group="init">class ToyMoE(nn.Module):</span>
+<span class="code-line" data-line="11" data-code-group="init">    def __init__(self, dim=8, n_experts=4, top_k=2):</span>
+<span class="code-line" data-line="12" data-code-group="init">        super().__init__()</span>
+<span class="code-line" data-line="13" data-code-group="init">        self.top_k = top_k</span>
+<span class="code-line" data-line="14" data-code-group="init">        self.router = nn.Linear(dim, n_experts, bias=False)</span>
+<span class="code-line" data-line="15" data-code-group="init">        self.experts = nn.ModuleList(</span>
+<span class="code-line" data-line="16" data-code-group="init">            [Expert(dim) for _ in range(n_experts)])</span>
+<span class="code-line" data-line="17" data-code-group="flatten"></span>
+<span class="code-line" data-line="18" data-code-group="flatten">    def forward(self, x):              # x [B,T,C]</span>
+<span class="code-line" data-line="19" data-code-group="flatten">        flat = x.reshape(-1, x.size(-1)) # [N,C]</span>
+<span class="code-line" data-line="20" data-code-group="route">        logits = self.router(flat)       # [N,E]</span>
+<span class="code-line" data-line="21" data-code-group="route">        probs = F.softmax(logits, dim=-1)</span>
+<span class="code-line" data-line="22" data-code-group="route">        weights, ids = probs.topk(self.top_k, dim=-1)</span>
+<span class="code-line" data-line="23" data-code-group="route">        weights = weights / weights.sum(-1, keepdim=True)</span>
+<span class="code-line" data-line="24" data-code-group="dispatch">        output = torch.zeros_like(flat)</span>
+<span class="code-line" data-line="25" data-code-group="dispatch">        for expert_id, expert in enumerate(self.experts):</span>
+<span class="code-line" data-line="26" data-code-group="dispatch">            selected = (ids == expert_id).any(dim=-1)</span>
+<span class="code-line" data-line="27" data-code-group="dispatch">            if selected.any():</span>
+<span class="code-line" data-line="28" data-code-group="weight">                weight = (weights[selected]</span>
+<span class="code-line" data-line="29" data-code-group="weight">                    * (ids[selected] == expert_id)).sum(-1)</span>
+<span class="code-line" data-line="30" data-code-group="weight">                output[selected] += (</span>
+<span class="code-line" data-line="31" data-code-group="weight">                    expert(flat[selected]) * weight.unsqueeze(-1))</span>
+<span class="code-line" data-line="32" data-code-group="return">        return output.view_as(x), probs, ids</span></code></pre></div>
+          <div id="codeExplainer" class="code-explainer" aria-live="polite"></div>
+        </div>
+
+        <div class="mistake-box"><strong>这段代码故意清楚，不代表生产高效</strong>逐专家 Python 循环、布尔索引和不等长小矩阵会浪费 GPU；它也没有 expert capacity、all-to-all、router float32、可微负载辅助项或 z-loss。现有脚本末尾的 <code>bincount</code> 方差只是教学指标，不能直接当可微训练损失。</div>
+        <div class="tip-box"><strong>运行方式</strong>先进入课程根目录，再运行 <code>python code\moe_router_demo.py</code>。输出会显示 <code>[2,3,8]</code> 的形状、6 个 token 的 Top-2 专家与教学版负载指标。若报错，先确认当前 Python 环境已安装 PyTorch。</div>
+
+        <div class="deep-question"><h3>代码填空：为什么专家必须放在 <code>nn.ModuleList</code>，不能只用普通 list？</h3><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">普通 list 可以让 forward 遍历，但 PyTorch 不会把其中模块可靠地注册为子模块。结果是参数可能不出现在 <code>model.parameters()</code> 中，也不会自动随 <code>.to(device)</code> 移动或被 optimizer 更新。<code>nn.ModuleList</code> 同时保留列表式访问与模块注册。</div></div>
+      </section>
+
+      <section class="lesson-section" id="systems">
+        <p class="section-kicker">第 7 关 · 从玩具代码到真实系统</p>
+        <h2>真正困难的不只算法，还有搬 token、填容量与跑大矩阵</h2>
+        <p>若专家分布在不同 GPU，通常不是每一步搬动专家权重，而是搬动 token activation：</p>
+        <div class="communication-flow">
+          <div class="comm-step"><strong>本地路由</strong><span>算目标 expert ID</span></div>
+          <div class="comm-step network"><strong>第 1 次 all-to-all</strong><span>把 token 发到专家所在设备</span></div>
+          <div class="comm-step compute"><strong>Grouped FFN</strong><span>专家批量计算</span></div>
+          <div class="comm-step network"><strong>第 2 次 all-to-all</strong><span>把结果送回原设备</span></div>
+          <div class="comm-step"><strong>恢复顺序</strong><span>按 gate 加权合并</span></div>
+        </div>
+
+        <div class="truth-box"><strong>MoE 不保证墙钟时间更快</strong>固定 K 时，增加 E 不让专家 FFN 主 FLOPs 同比增长；但权重驻留、router 打分、token packing、负载不均、网络延迟和小 batch 利用率都可能成为瓶颈。尤其单 token 解码时，“算得少”不自动等于“响应更快”。</div>
+
+        <h3>PDF 中代表模型应该怎样分类</h3>
+        <div class="model-grid">
+          <article class="model-card"><span class="model-tag">算法 + 自动分片 · 2020</span><h3>GShard</h3><p>Transformer 中的稀疏 Top-2 gate 与自动 sharding。第二专家不是“从所有剩余专家随机抽一个”：它仍是 second-best，训练时只随机决定是否 dispatch。</p></article>
+          <article class="model-card"><span class="model-tag">路由简化 · 2021/2022</span><h3>Switch Transformer</h3><p>每个 token 选一位专家，降低 router、容量与通信复杂度。论文的 4× 是特定 Switch-C 对 T5-XXL 的实验结果，不是 Top-1 对 Top-2 的通用倍数。</p></article>
+          <article class="model-card"><span class="model-tag">开源模型 · 2024</span><h3>Mixtral 8×7B</h3><p>每个 MoE 层有 8 个 FFN，逐 token 选 2 个。官方报告约 47B 总参数、约 13B active，而不是简单的 8×7=56B。</p></article>
+          <article class="model-card"><span class="model-tag">系统 · 2022</span><h3>DeepSpeed-MoE / Tutel</h3><p>重点是大规模训练、推理、并行与通信优化。论文中的倍数依赖硬件、规模、基线和工作负载，不应当成任意模型的承诺。</p></article>
+          <article class="model-card"><span class="model-tag">Dropless 系统 · 2022</span><h3>MegaBlocks</h3><p>用块稀疏计算处理不均匀 token 数，说明“固定容量后丢 token”不是唯一实现。PDF 的“数量级提升”表述过强。</p></article>
+          <article class="model-card"><span class="model-tag">稳定训练 · 2022</span><h3>ST-MoE</h3><p>系统研究稳定与迁移，提出 router z-loss。它与 Switch 的负载损失解决不同问题。</p></article>
+        </div>
+
+        <h3>五个经常被混成一个词的量</h3>
+        <div class="table-scroll"><table class="summary-table"><thead><tr><th>量</th><th>它回答的问题</th><th>增加专家 E、固定 K 时</th></tr></thead><tbody><tr><td>总参数</td><td>模型一共存了多少权重？</td><td>专家部分近似随 E 增长。</td></tr><tr><td>活跃参数</td><td>一个 token 实际经过多少权重？</td><td>专家部分主要随 K。</td></tr><tr><td>FLOPs</td><td>做了多少算术？</td><td>专家主算术主要随 K，但 router 随 E。</td></tr><tr><td>显存/内存</td><td>权重与 activation 放在哪里？</td><td>全部专家必须驻留、分片或卸载。</td></tr><tr><td>延迟/吞吐</td><td>用户等多久、系统每秒处理多少？</td><td>强依赖通信、batch、kernel 与硬件。</td></tr></tbody></table></div>
+
+        <div class="quiz" id="quiz-communication" data-answer="a" data-good="答对：专家并行通常交换 token activation，再把输出送回。" data-try="专家权重通常固定在托管它的设备上。">
+          <h3>all-to-all 主要在搬什么？</h3>
+          <div class="quiz-options"><button class="choice-button" type="button" data-choice="a">搬运激活张量</button><button class="choice-button" type="button" data-choice="b">搬运全部权重</button><button class="choice-button" type="button" data-choice="c">搬运完整词表</button></div>
+          <p class="quiz-feedback" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="practice">
+        <p class="section-kicker">第 8 关 · 检索练习与迁移</p>
+        <h2>先答再看：能解释“为什么”，才算真正理解</h2>
+
+        <div class="myth-grid">
+          <article class="myth-card"><strong>误区：8 个专家就做 8 倍 FFN</strong><p class="correction">固定 Top-2 时，专家主计算约两份；但路由与通信仍有开销。</p></article>
+          <article class="myth-card"><strong>误区：稀疏激活自动节省显存</strong><p class="correction">全部专家权重仍要存放；需要分片、卸载或量化降低单设备驻留。</p></article>
+          <article class="myth-card"><strong>误区：未选专家完全没有梯度</strong><p class="correction">它只没有这条 token 的主任务梯度，仍可从其他 token 获得更新。</p></article>
+          <article class="myth-card"><strong>误区：专家自然分成数学与代码</strong><p class="correction">专业化可能涌现，却不保证可解释；均衡使用也不等于语义多样。</p></article>
+          <article class="myth-card"><strong>误区：dropped token 从句子消失</strong><p class="correction">经典固定容量实现只跳过本次 expert 计算，残差仍保留表示。</p></article>
+          <article class="myth-card"><strong>误区：Top-K 不可微所以 router 不学</strong><p class="correction">索引离散，但选中权重、概率代理与辅助损失仍能向 router 传梯度。</p></article>
+        </div>
+
+        <div class="numeric-challenge">
+          <div class="challenge-card"><h3>数值挑战 1：容量</h3><p>Switch top-1：T=12、E=3、CF=1，路由 counts=[7,3,2]。每专家容量和总溢出各是多少？</p><div class="challenge-inputs"><label>容量 C<input id="challengeCapacity" type="number"></label><label>溢出数<input id="challengeOverflow" type="number"></label><button id="checkCapacityChallenge" class="lab-button primary" type="button">检查</button></div><p id="capacityChallengeFeedback" class="challenge-feedback" aria-live="polite"></p></div>
+          <div class="challenge-card"><h3>数值挑战 2：参数</h3><p>共享参数 5B；每专家 6B；E=8、K=2。玩具近似下 total 与 active 各多少 B？</p><div class="challenge-inputs"><label>Total<input id="challengeTotalParams" type="number"></label><label>Active<input id="challengeActiveParams" type="number"></label><button id="checkParameterChallenge" class="lab-button primary" type="button">检查</button></div><p id="parameterChallengeFeedback" class="challenge-feedback" aria-live="polite"></p></div>
+        </div>
+
+        <div class="quiz" id="quiz-main-claim" data-answer="a" data-good="答对：总参数与单 token 活跃参数必须分别报告。" data-try="想想 Mixtral 为什么不是简单的 56B 全激活。">
+          <h3>读到“模型有 53B 参数”时先问什么？</h3>
+          <div class="quiz-options"><button class="choice-button" type="button" data-choice="a">总量激活分开</button><button class="choice-button" type="button" data-choice="b">两者始终相同</button><button class="choice-button" type="button" data-choice="c">只看模型命名</button></div>
+          <p class="quiz-feedback" aria-live="polite"></p>
+        </div>
+
+        <div class="deep-question"><h3>迁移题：负载完全平均是否一定最好？</h3><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">不一定。硬件希望负载接近均匀，但任务数据可能确实需要非均匀专业化；过强的平衡系数会与主任务冲突。目标是避免持续拥堵、闲置与溢出，同时保留有用的条件计算，而不是强迫每个小 batch 精确平均。</div></div>
+        <div class="deep-question"><h3>迁移题：怎样判断一个“MoE 更快 4×”的说法是否可信？</h3><button class="reveal-button" type="button">显示思路</button><div class="deep-answer">至少追问：和哪个 dense/MoE 基线比？质量是否相当？是达到固定质量的训练时间、单步吞吐还是推理延迟？使用什么硬件、batch、序列长度、精度、专家并行与容量因子？Switch 论文的 4× 就是特定 Switch-C 对 T5-XXL 的固定实验，而非通用常数。</div></div>
+
+        <h3>间隔复习：把“看懂”变成“记得住”</h3>
+        <div class="review-plan"><div class="review-day"><strong>现在</strong><p>不看页面，口述六步路由并画出形状。</p></div><div class="review-day"><strong>明天</strong><p>重做容量挑战，解释 dropped token。</p></div><div class="review-day"><strong>第 3 天</strong><p>运行脚本，逐行预测每个张量形状。</p></div><div class="review-day"><strong>第 7 天</strong><p>比较 Switch、Mixtral 与 dense FFN。</p></div></div>
+
+        <h3>一手资料与继续学习</h3>
+        <ul class="source-list">
+          <li><a href="https://arxiv.org/abs/1701.06538">Shazeer et al. (2017), Sparsely-Gated MoE</a> — 原始 noisy Top-K、importance/load losses；实验架构基于 LSTM，不是 Transformer 论文。</li>
+          <li><a href="https://arxiv.org/abs/2006.16668">GShard (2020)</a> — Transformer Top-2 gate、容量与自动分片。</li>
+          <li><a href="https://www.jmlr.org/papers/v23/21-0998.html">Switch Transformer (2022 JMLR)</a> — Top-1、容量、dropped token、可微负载代理；本课主参考。</li>
+          <li><a href="https://arxiv.org/abs/2202.08906">ST-MoE (2022)</a> — router z-loss 与稳定、可迁移的稀疏模型。</li>
+          <li><a href="https://arxiv.org/abs/2401.04088">Mixtral of Experts (2024)</a> — 8 个 FFN、每 token 选 2 个，以及 total/active 参数边界。</li>
+          <li><a href="https://arxiv.org/abs/2201.05596">DeepSpeed-MoE</a>、<a href="https://arxiv.org/abs/2206.03382">Tutel</a>、<a href="https://arxiv.org/abs/2211.15841">MegaBlocks</a> — 从算法走向系统、通信和 dropless 计算。</li>
+          <li><a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.ModuleList.html">PyTorch ModuleList</a>、<a href="https://docs.pytorch.org/docs/stable/generated/torch.topk.html">torch.topk</a>、<a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.softmax.html">F.softmax</a> — 课程代码对应的官方 API。</li>
+          <li><a href="https://arxiv.org/abs/2305.10403">PaLM 2 Technical Report</a> — 用于核对原 PDF 将 PaLM 2 归为 MoE 的说法；报告没有给出该架构归类。</li>
+        </ul>
+
+        <div class="tip-box"><strong>继续向我提问</strong>可以直接告诉我你卡在哪个关卡，或把运行 <code>moe_router_demo.py</code> 的输出贴给我。我可以继续陪你逐 token、逐张量、逐行排查；完成作答后，再把真正掌握的内容写入学习记录。</div>
+        <div class="lesson-actions"><a href="../reference/moe-routing-cheatsheet.html">打开 MoE 一页速查表</a><a class="secondary" href="0004-moe-and-scaling.html">回到 25 分钟概览</a><a class="secondary" href="../index.html">返回课程主页</a></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="../assets/moe-course.js"></script>
+</body>
+</html>
