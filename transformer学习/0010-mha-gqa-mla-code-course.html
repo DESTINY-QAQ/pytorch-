@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="面向 Python 与 PyTorch 新手的 MHA、GQA、MLA 与 MoE 互动课程：PDF 逐页勘误、公式手算、张量形状、KV Cache、两段源码逐块精读与练习。">
+  <title>MHA、GQA、MLA 与 MoE｜PDF 勘误 × PyTorch 逐行互动课</title>
+  <link rel="stylesheet" href="../assets/course.css">
+  <link rel="stylesheet" href="../assets/embedding-course.css">
+  <link rel="stylesheet" href="../assets/code-reading.css">
+  <link rel="stylesheet" href="../assets/attention-deep-dive.css">
+</head>
+<body class="embedding-course code-reading attention-deep-dive">
+  <header class="embedding-hero attention-hero code-hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Lesson 10 · PDF 勘误 · 162 行源码 · Python / PyTorch 新手</p>
+        <h1>从 Q·Kᵀ 到 KV Cache：真正读懂 MHA、GQA、MLA</h1>
+        <p class="hero-lead">这不是把 8 页 PDF 换成网页，而是先核对原文、修正错误，再用可手算例子和两份真实脚本把概念落到每一个张量轴、Python 符号与 PyTorch API 上。MoE 会作为相邻但不同的机制单独拆解。</p>
+        <div class="hero-badges">
+          <span class="hero-badge">8 页逐页导航</span>
+          <span class="hero-badge">2 个源码阅读器</span>
+          <span class="hero-badge">9 组互动实验</span>
+          <span class="hero-badge">10 道即时题 + 8 道深入题</span>
+        </div>
+      </div>
+      <div class="hero-equation" aria-label="本课核心公式预览">
+        <div class="equation-title">ATTENTION CORE</div>
+        <div class="equation-row"><strong>score</strong><span>Q @ K.transpose(-2,-1)</span></div>
+        <div class="equation-row"><strong>scale</strong><span>score / sqrt(head_dim)</span></div>
+        <div class="equation-row"><strong>mask</strong><span>future → -inf</span></div>
+        <div class="equation-row"><strong>read</strong><span>softmax(score) @ V</span></div>
+        <div class="equation-row"><strong>cache</strong><span>MHA H组 · GQA G组 · ToyMLA latent · 真实 MLA latent + 位置键</span></div>
+        <small>同一公式，不同的 K/V 参数化与缓存方式</small>
+      </div>
+    </div>
+  </header>
+  <div class="course-progress" aria-hidden="true"><span id="attentionProgressFill"></span></div>
+
+  <main class="wrap embedding-layout">
+    <aside class="embedding-sidebar" aria-label="课程导航">
+      <h2>课程目录</h2>
+      <nav>
+        <a href="#map" class="active">0. 先校正学习地图</a>
+        <a href="#pdf-tour">1. PDF 逐页导读</a>
+        <a href="#foundation">2. 单头注意力手算</a>
+        <a href="#mha">3. MHA 与张量形状</a>
+        <a href="#gqa">4. MQA / GQA 分组</a>
+        <a href="#mla">5. ToyMLA 与真实 MLA</a>
+        <a href="#cache">6. KV Cache 计算器</a>
+        <a href="#audit">7. PDF 系统勘误</a>
+        <a href="#attention-code">8. 注意力源码精读</a>
+        <a href="#syntax">9. Python 语法显微镜</a>
+        <a href="#moe">10. MoE 路由实验</a>
+        <a href="#moe-code">11. MoE 源码精读</a>
+        <a href="#review">12. 测验与深入题</a>
+        <a href="#practice">13. 运行与动手顺序</a>
+      </nav>
+      <div class="checkpoint">
+        <label><input type="checkbox" data-attn-check="qkv"> 能用一句话解释 Q/K/V</label>
+        <label><input type="checkbox" data-attn-check="mask"> 能手算 causal mask</label>
+        <label><input type="checkbox" data-attn-check="shape"> 会追踪 [B,H,T,D]</label>
+        <label><input type="checkbox" data-attn-check="gqa"> 能画出 GQA 分组</label>
+        <label><input type="checkbox" data-attn-check="mla"> 能区分 ToyMLA / MLA</label>
+        <label><input type="checkbox" data-attn-check="code"> 能解释两份代码的数据流</label>
+        <label><input type="checkbox" data-attn-check="pitfall"> 能指出关键易错点</label>
+        <p id="attentionProgressCopy" class="progress-copy">已完成 0 / 7</p>
+        <button id="resetAttentionProgress" class="reset-progress" type="button">重置本课进度</button>
+      </div>
+    </aside>
+
+    <article class="embedding-main">
+      <section id="map" class="lesson-section">
+        <p class="section-kicker">第 0 课 · 先排除错误前提</p>
+        <h2>四个缩写并不是四种同类机制</h2>
+        <p class="lead">MHA、MQA、GQA、MLA 都属于注意力结构；MoE 通常替换 Transformer block 的 FFN。DeepSeek-V2 同时使用 MLA 与 MoE，是因为它们优化的是两个不同子层，不是因为 MoE 是一种注意力。</p>
+        <div class="scope-banner">
+          <div class="scope-item fact"><strong>已确认的事实</strong><p>PDF 共 8 页；两段脚本均能在项目的 <code>tf</code> 环境运行，三种注意力输出形状均为 <code>[2,8,32]</code>。</p></div>
+          <div class="scope-item correction"><strong>必须纠正</strong><p>PDF 有错误公式、错误算术、无来源百分比和错误的 MLA 总览图，不能逐字当作事实教材。</p></div>
+          <div class="scope-item boundary"><strong>教学边界</strong><p><code>ToyMLA</code> 与负载损失都刻意简化；理解核心数据流可以，不能外推生产模型性能。</p></div>
+        </div>
+        <div class="learning-route" aria-label="本课学习路径">
+          <div class="route-step"><b>1</b><strong>单头手算</strong><span>先看一个 Query</span></div>
+          <div class="route-step"><b>2</b><strong>多头形状</strong><span>B / H / T / D</span></div>
+          <div class="route-step"><b>3</b><strong>共享 K/V</strong><span>MQA / GQA</span></div>
+          <div class="route-step"><b>4</b><strong>压缩 K/V</strong><span>Toy / 真实 MLA</span></div>
+          <div class="route-step"><b>5</b><strong>逐块读代码</strong><span>语法 + 张量 + 风险</span></div>
+        </div>
+        <div class="truth-box"><strong>一条贯穿全课的事实</strong>GQA/MLA 最明确的目标是降低自回归解码时的 KV Cache 与内存带宽压力。它们不会让训练或 prefill 中的所有 <code>T×T</code> 注意力关系凭空消失。</div>
+        <div class="mistake-box"><strong>不要照搬 PDF 第 2 页的总览图</strong>图中把 MLA 写成了 <em>Multi-Linear Attention</em>，而正文讨论的是 <em>Multi-head Latent Attention</em>；图里还给出没有数据集和来源的质量百分比。课程将重新构建比较，不使用那张图作知识依据。</div>
+        <h3>开始前只需掌握这些最小概念</h3>
+        <table class="summary-table">
+          <thead><tr><th>概念</th><th>最小理解</th><th>本课会补齐什么</th></tr></thead>
+          <tbody>
+            <tr><td>Python 类</td><td><code>class</code> 是蓝图，<code>self</code> 是当前对象</td><td><code>nn.Module</code>、<code>super()</code>、<code>forward</code></td></tr>
+            <tr><td>张量 shape</td><td>每个轴都有语义</td><td><code>[B,T,C] ↔ [B,H,T,D]</code></td></tr>
+            <tr><td>矩阵乘法</td><td><code>@</code> 与 <code>*</code> 不同</td><td>QKᵀ 与权重乘 V</td></tr>
+            <tr><td>softmax</td><td>把一组分数归一成概率</td><td>为什么必须写 <code>dim=-1</code></td></tr>
+            <tr><td>Transformer</td><td>注意力负责 token 间通信，FFN 逐 token 变换</td><td>注意力变体与 MoE 的边界</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="pdf-tour" class="lesson-section">
+        <p class="section-kicker">第 1 课 · 原文逐页定位</p>
+        <h2>8 页 PDF 讲了什么，哪里需要停下来核对？</h2>
+        <p>点击页码查看该页主线、真正应带走的结论和勘误。这里的“PDF 写了什么”与“它是否正确”被明确分开。</p>
+        <div id="pdfPageTabs" class="pdf-page-tabs" aria-label="PDF 页码选择"></div>
+        <div id="pdfPagePanel" class="pdf-page-panel" aria-live="polite"></div>
+        <p class="source-note">本地原文件：<a href="../../【Transformer基础-3】MHA、GQA%20和%20MLA.pdf">《Transformer基础-3：MHA、GQA 和 MLA》</a>。课程还用原始论文交叉核验，来源见页尾。</p>
+      </section>
+
+      <section id="foundation" class="lesson-section">
+        <p class="section-kicker">第 2 课 · 从一个 Query 开始</p>
+        <h2>Q 在提问，K 在报名，V 是真正取回的信息</h2>
+        <div class="term-trio">
+          <div class="term-card"><span class="letter">Q</span><h3>Query：我想找什么？</h3><p>当前 token 经过可学习投影后形成查询向量。它不是一句自然语言问题，而是一组训练出来的数字。</p></div>
+          <div class="term-card"><span class="letter">K</span><h3>Key：我适合被怎样匹配？</h3><p>每个可见 token 提供一个键。Q 与 K 的点积越大，通常表示当前投影空间里越匹配。</p></div>
+          <div class="term-card"><span class="letter">V</span><h3>Value：选中我后拿走什么？</h3><p>softmax 权重不会直接加权 K，而是加权 V。K 用于寻址，V 承载被读取的内容。</p></div>
+        </div>
+        <div class="formula-card">
+          scores = Q @ Kᵀ / √D<br>
+          weights = softmax(scores + causal_mask, dim=-1)<br>
+          output = weights @ V
+          <span class="formula-note">D 是每个头的维度，不是 d_model 的任意别名；mask 在 softmax 之前加入。</span>
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 1：用三词二维向量手算一次注意力</h3><p>选择当前 Query。页面会显示缩放分数、因果遮罩后的权重和最终二维输出。</p></div><span class="lab-tag">NUMBER LAB</span></div>
+          <div class="attention-number-stage">
+            <div id="queryPicker" class="query-picker"></div>
+            <div id="attentionNumberResult" class="number-work" aria-live="polite"></div>
+          </div>
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 2：因果 mask 为什么是下三角？</h3><p>调节长度并高亮一个 Query 行。绿色可读，红色是未来位置。</p></div><span class="lab-tag">MASK LAB</span></div>
+          <div class="mask-controls">
+            <label>序列长度 T <input id="maskLength" type="range" min="2" max="8" value="4"><output id="maskLengthOut">4</output></label>
+            <label>当前 Query <input id="maskQuery" type="range" min="0" max="3" value="2"><output id="maskQueryOut">2</output></label>
+          </div>
+          <div id="maskStage" class="mask-stage"></div>
+          <div id="maskExplanation" class="lab-output"></div>
+        </div>
+        <div class="concept-grid">
+          <div class="concept-card blue"><h3>为什么除以 √D？</h3><p>若 Q/K 各维尺度相近，点积方差随 D 增大。logit 过大会让 softmax 过尖、梯度不稳定；缩放把量级拉回更合适的范围。</p></div>
+          <div class="concept-card warn"><h3>mask ≠ 位置编码</h3><p>mask 只控制“能不能看”；RoPE/位置编码告诉模型位置或相对距离。脚本有 causal mask，但三种模块都没有位置编码。</p></div>
+          <div class="concept-card"><h3>一个头不一定等于一种人类规则</h3><p>“语法头”“长距离头”可以帮助建立直觉，但实际头通常是分布式协同的，不能保证可被唯一命名。</p></div>
+          <div class="concept-card"><h3>softmax 沿哪一轴？</h3><p>每个 Query 要在所有 Key 上分配权重，因此对最后的 Key 轴做 <code>dim=-1</code>。沿 batch 或 token 行之间归一化都会改变问题。</p></div>
+        </div>
+      </section>
+
+      <section id="mha" class="lesson-section">
+        <p class="section-kicker">第 3 课 · Multi-Head Attention</p>
+        <h2>多头最难的不是公式，而是四个轴的搬运</h2>
+        <p class="lead">输入主干使用 <code>[B,T,C]</code>。把通道 C 均分给 H 个头后，每头维度 <code>D=C/H</code>，注意力内部使用 <code>[B,H,T,D]</code>。</p>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 3：MHA 形状调试器</h3><p>修改 B/T/C/H，观察源码 L34–37 的每一步。故意令 C 不能整除 H，也能看到真实风险。</p></div><span class="lab-tag">SHAPE LAB</span></div>
+          <div class="shape-controls">
+            <label>Batch B <input id="shapeBatch" type="number" min="1" max="64" value="2"></label>
+            <label>序列长度 T <input id="shapeTime" type="number" min="1" max="512" value="8"></label>
+            <label>隐藏维度 C <input id="shapeChannels" type="number" min="1" max="4096" value="32"></label>
+            <label>查询头 H <input id="shapeHeads" type="number" min="1" max="64" value="4"></label>
+          </div>
+          <div id="shapeLabResult" class="lab-output" aria-live="polite"></div>
+          <div id="shapeFlow" class="shape-flow" aria-label="MHA 形状变化"></div>
+        </div>
+        <h3>代码中的一次 QKV 投影，不是三层神经网络</h3>
+        <pre><code>self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
+q, k, v = self.qkv(x).chunk(3, dim=-1)</code></pre>
+        <p>Linear 只执行一次：<code>[B,T,C] → [B,T,3C]</code>。随后 <code>chunk</code> 只是把最后一轴切成三段，不新增参数。数学上可视为三张投影矩阵拼在一张大权重里。</p>
+        <div class="concept-grid">
+          <div class="concept-card good"><h3>已实现的核心</h3><p>Q/K/V 投影、拆头、缩放点积、因果遮罩、softmax、加权 V、合并头。</p></div>
+          <div class="concept-card warn"><h3>脚本明确缺少</h3><p>标准输出投影 <code>W^O</code>、dropout、padding mask、RoPE/位置编码、残差、LayerNorm、真实 KV Cache。</p></div>
+          <div class="concept-card"><h3><code>*</code> 与 <code>@</code></h3><p>PDF 伪代码写 <code>X * W</code> 容易误导 Python 新手。在 PyTorch 中 <code>*</code> 是逐元素乘；线性代数乘法使用 <code>@</code>，Linear 内部也做矩阵乘与可选偏置。</p></div>
+          <div class="concept-card"><h3><code>view → transpose</code></h3><p><code>[B,T,C]</code> 先看作 <code>[B,T,H,D]</code>，再交换轴 1 和 2。只写数值形状可能看不出 T/D 恰好相等时的转置，所以必须同时记轴名。</p></div>
+        </div>
+      </section>
+
+      <section id="gqa" class="lesson-section">
+        <p class="section-kicker">第 4 课 · 从 MHA 到 MQA / GQA</p>
+        <h2>Query 头不减少，减少的是独立 K/V 头</h2>
+        <div class="formula-card">
+          Q: [B, H, T, D]<br>
+          K,V: [B, G, T, D]<br>
+          repeat = H / G
+          <span class="formula-note">必须满足 H % G == 0。G=H 是 MHA；G=1 是 MQA；中间值是一般 GQA。</span>
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 4：谁共享哪一组 K/V？</h3><p>改变查询头数 H 与 KV 组数 G。每张卡表示一个独立 Query 头。</p></div><span class="lab-tag">GROUP LAB</span></div>
+          <div class="head-toolbar">
+            <label>Query 头 H<select id="headCount"><option>4</option><option selected>8</option><option>16</option></select></label>
+            <label>KV 组 G<select id="kvGroupCount"></select></label>
+          </div>
+          <div id="headMap" class="head-map"></div>
+          <div id="headSummary" class="head-summary"></div>
+        </div>
+        <table class="summary-table">
+          <thead><tr><th>结构</th><th>Q 头</th><th>KV 头</th><th>每个 KV 头服务</th><th>相对 MHA 缓存</th></tr></thead>
+          <tbody>
+            <tr><td>MHA</td><td>H</td><td>H</td><td>1 个 Q 头</td><td>1</td></tr>
+            <tr><td>GQA</td><td>H</td><td>G</td><td>H/G 个 Q 头</td><td>G/H</td></tr>
+            <tr><td>MQA</td><td>H</td><td>1</td><td>全部 H 个 Q 头</td><td>1/H</td></tr>
+          </tbody>
+        </table>
+        <div class="mistake-box"><strong>PDF 第 7 页的关键错误</strong>GQA 仍有 H 个不同 Query 头，每个都要与其对应的 K 计算注意力分数。它不会把主要 QK 点积次数简单降成 G/H。更可靠的说法是：GQA 减少 K/V 投影宽度、KV Cache 和解码时反复读取 K/V 的带宽。</div>
+        <div class="tip-box"><strong>源码的 <code>repeat_interleave</code> 是教学桥梁</strong>它真的把 <code>[B,G,T,D]</code> 物理复制成 <code>[B,H,T,D]</code>，方便复用普通注意力函数。生产级 kernel 通常直接表达共享关系，避免这份中间复制；因此不能用该 forward 的峰值内存测真实 GQA 节省。</div>
+      </section>
+
+      <section id="mla" class="lesson-section">
+        <p class="section-kicker">第 5 课 · Multi-head Latent Attention</p>
+        <h2>“压缩后恢复”只讲对了一半</h2>
+        <p class="lead">脚本的 <code>ToyMLA</code> 准确展示联合低秩瓶颈，但真实 DeepSeek-V2 MLA 还需要查询压缩、解耦 RoPE 与矩阵吸收。点击切换，比较两层理解。</p>
+        <div id="modelTabs" class="model-tabs">
+          <button type="button" data-model="toy">脚本 ToyMLA</button>
+          <button type="button" data-model="real">真实 MLA 核心</button>
+        </div>
+        <div id="modelPanel" class="model-panel" aria-live="polite"></div>
+        <h3>低秩联合 K/V 压缩</h3>
+        <div class="formula-card">
+          c<sub>t</sub><sup>KV</sup> = W<sup>DKV</sup> h<sub>t</sub><br>
+          k<sub>t</sub><sup>C</sup> = W<sup>UK</sup> c<sub>t</sub><sup>KV</sup><br>
+          v<sub>t</sub><sup>C</sup> = W<sup>UV</sup> c<sub>t</sub><sup>KV</sup>
+          <span class="formula-note">K 与 V 共用同一个 c^KV，不是各缓存一份 latent。</span>
+        </div>
+        <p>在 ToyMLA 中，两层之间没有激活函数，所以联合映射等价于 <code>W_restore @ W_compress</code>，秩至多为 <code>latent_dim</code>。这就是压缩约束：省存储不是免费午餐，它限制了可表达的线性映射。</p>
+        <div class="concept-grid">
+          <div class="concept-card blue"><h3>查询压缩</h3><p>真实 MLA 也可把 Query 先降维再升维，主要用于降低训练激活内存；历史 KV Cache 不存过去 Query，因此它不是缓存节省的主体。</p></div>
+          <div class="concept-card blue"><h3>解耦 RoPE</h3><p>内容 K/V 与位置分量分开，额外共享位置键 <code>k^R</code>。因此真实缓存不是只有 <code>d_c</code>，而是每 token、每层 <code>d_c+d_h^R</code> 个元素。</p></div>
+          <div class="concept-card good"><h3>矩阵吸收</h3><p>K 上投影可吸收到 Query 侧，V 上投影可吸收到输出投影，使推理时不必像 ToyMLA 那样显式恢复完整 K/V。</p></div>
+          <div class="concept-card warn"><h3>不能外推速度</h3><p>教学脚本没有增量解码、cache 接口和专用 kernel。它打印的是“若缓存 latent”的元素数，不是一次真实 MLA 性能基准。</p></div>
+        </div>
+        <div class="truth-box"><strong>论文中的可核验例子</strong>DeepSeek-V2 设 <code>d_c=4d_h</code>、<code>d_h^R=d_h/2</code>，因此 MLA 缓存约为 <code>4.5d_h</code> 元素/层/token，等价于只有 2.25 个 KV 组的 GQA 缓存量。这个结论来自特定架构，不等于所有 MLA 配置。</div>
+      </section>
+
+      <section id="cache" class="lesson-section">
+        <p class="section-kicker">第 6 课 · 把“省显存”算成数字</p>
+        <h2>KV Cache 先数元素，再乘 batch、层数与 dtype</h2>
+        <div class="formula-card">
+          MHA = B × T × L × 2H D × bytes<br>
+          GQA = B × T × L × 2G D × bytes<br>
+          ToyMLA = B × T × L × latent × bytes<br>
+          MLA(core) = B × T × L × (d_c + d_h^R) × bytes
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 5：KV Cache 计算器</h3><p>“脚本预设”会复现 1024/512/128；“长上下文示例”用于观察放大效应，不代表某个完整模型配置。</p></div><span class="lab-tag">CACHE LAB</span></div>
+          <div class="cache-presets">
+            <button id="cachePresetScript" type="button">脚本预设</button>
+            <button id="cachePresetLong" type="button">长上下文形状示例</button>
+          </div>
+          <div class="cache-controls">
+            <label>Batch B<input id="cacheBatch" type="number" min="1" max="128" value="2"></label>
+            <label>上下文 T<input id="cacheTime" type="number" min="1" max="1048576" value="8"></label>
+            <label>层数 L<input id="cacheLayers" type="number" min="1" max="256" value="1"></label>
+            <label>d_model C<input id="cacheChannels" type="number" min="1" max="65536" value="32"></label>
+            <label>Query 头 H<select id="cacheHeads"><option>1</option><option>2</option><option selected>4</option><option>8</option><option>16</option><option>32</option><option>64</option></select></label>
+            <label>KV 头 G<select id="cacheKvHeads"></select></label>
+            <label>latent d_c<input id="cacheLatent" type="number" min="1" max="8192" value="8"></label>
+            <label>位置键 d_h^R<input id="cacheRope" type="number" min="0" max="1024" value="0"></label>
+            <label>每元素字节<select id="cacheDtype"><option value="4" selected>float32 · 4 B</option><option value="2">fp16/bf16 · 2 B</option><option value="1">int8 · 1 B</option></select></label>
+          </div>
+          <div id="cacheResults" class="cache-results"></div>
+          <div id="cacheNote" class="lab-output"></div>
+        </div>
+        <div class="decode-compare">
+          <div class="decode-card"><h3>训练 / Prefill</h3><p>整段 token 可以并行，注意力分数含 <code>[B,H,T,T]</code>。GQA 减少 K/V 投影，但不会把每个 Q 头对应的注意力矩阵删掉。</p></div>
+          <div class="decode-card"><h3>逐 token Decode</h3><p>每步只有一个新 Query，却要读取长历史的 K/V。此时 cache 体积与内存带宽更容易成为瓶颈，MQA/GQA/MLA 的价值更直接。</p></div>
+        </div>
+        <div class="mistake-box"><strong>PDF 第 7 页算术纠正</strong><code>4096 × 8 / 32 = 1024</code>，不是 102。若同时统计 K 和 V，GQA 每 token、每层应是 <code>2×1024=2048</code> 个元素；MHA 是 <code>2×4096=8192</code>。</div>
+      </section>
+
+      <section id="audit" class="lesson-section">
+        <p class="section-kicker">第 7 课 · 事实、推测与错误分开</p>
+        <h2>PDF 可以作为章节清单，不能作为唯一事实来源</h2>
+        <table class="evidence-table">
+          <thead><tr><th>位置</th><th>PDF 内容</th><th>核验结果</th><th>课程处理</th></tr></thead>
+          <tbody>
+            <tr><td>P2 总览图</td><td>把 MLA 写成 Multi-Linear Attention，并给 85–90%、92–95% 等质量数值</td><td class="corrected">错误结构 + 无来源数字</td><td>删除原图，重画共享/压缩逻辑</td></tr>
+            <tr><td>P3 伪代码</td><td><code>X * W</code> 表示投影；每头各有完整 W<sup>O</sup></td><td class="corrected">对 PyTorch 误导；W<sup>O</sup> 通常在拼接后共享</td><td>改用 Linear / <code>@</code> 并讲轴</td></tr>
+            <tr><td>P3 复杂度</td><td>公式中的序列变量显示成空白</td><td class="corrected">排版损坏</td><td>恢复为 O(BT²d) 并补投影成本</td></tr>
+            <tr><td>P4 / P8</td><td>MQA 必须从头训练，无法从 MHA 迁移</td><td class="corrected">错误</td><td>GQA 原论文展示 MHA→MQA/GQA uptraining</td></tr>
+            <tr><td>P4 性能</td><td>缓存缩小 1/10–1/100、推理约 12 倍</td><td class="unknown">仅特定实验可能成立，非通则</td><td>只保留可计算的 H/G 比例</td></tr>
+            <tr><td>P5 Llama 2</td><td>系列均使用 GQA；70B 从 32 KV 头降至 8</td><td class="corrected">过度泛化且头数错误</td><td>70B 为 64 个 Q 头、8 个 KV 头；不泛化全部型号</td></tr>
+            <tr><td>P5 GPT-4</td><td>可能使用 GQA/MQA 类技术</td><td class="unknown">内部架构未公开</td><td>标为不可验证猜测，不进入知识主线</td></tr>
+            <tr><td>P6 归属</td><td>清华、智谱参与 DeepSeek 项目提出 MLA</td><td class="corrected">DeepSeek-V2 报告未支持</td><td>按论文署名 DeepSeek-AI 表述</td></tr>
+            <tr><td>P6 MLA cache</td><td>只需缓存 d_c；若 K/V 分开可乘 2</td><td class="corrected">不符合解耦 RoPE 结构</td><td>真实核心口径为 d_c+d_h^R</td></tr>
+            <tr><td>P7 点积</td><td>GQA 点积次数约为 MHA 的 G/H</td><td class="corrected">错误</td><td>区分 K/V 投影、缓存、带宽与 QK 算术</td></tr>
+            <tr><td>P7 算术</td><td><code>4096×8/32=102</code></td><td class="corrected">应为 1024</td><td>给出完整 K+V 口径</td></tr>
+            <tr><td>P8 排名</td><td>MHA≈MLA≥GQA≫MQA</td><td class="unknown">无条件总排名不成立</td><td>改为自由度、缓存、实现和经验质量多维比较</td></tr>
+          </tbody>
+        </table>
+        <div class="truth-box"><strong>合理推测与事实的边界</strong>参数共享越多，表示自由度通常越小，这是结构推断；最终质量是否下降、下降多少，仍需指定模型、数据、训练预算和评测。速度也依赖硬件、batch、上下文与 kernel，不能只按缩写排序。</div>
+      </section>
+
+      <section id="attention-code" class="lesson-section">
+        <p class="section-kicker">第 8 课 · attention_variants_demo.py</p>
+        <h2>96 行代码，按 11 个职责块逐段读</h2>
+        <p>点击源码块。左侧保持原始行号，右侧同时解释 Python 语法、运行过程、张量形状和易错点。空行不需要背，但每个有意义的语句都已覆盖。</p>
+        <div id="attentionBlockButtons" class="code-overview" aria-label="注意力源码块"></div>
+        <div class="source-explorer">
+          <div id="attentionSource" class="source-code" aria-label="attention_variants_demo.py 源码"></div>
+          <div id="attentionExplain" class="explain-panel" aria-live="polite"></div>
+        </div>
+        <h3>实际运行输出（项目 <code>tf</code> 环境）</h3>
+        <div class="runtime-output"><span class="ok">$ C:\conda\envs\tf\python.exe code\attention_variants_demo.py</span><br>
+<span class="number">   MHA</span>: output=(2, 8, 32), cache 教学估计=1024 floats<br>
+<span class="number">   GQA</span>: output=(2, 8, 32), cache 教学估计=512 floats<br>
+<span class="number">ToyMLA</span>: output=(2, 8, 32), cache 教学估计=128 floats<br>
+<span class="muted">PyTorch 2.7.1+cu118；CUDA 可用，但源码未指定 device，实际张量在 CPU。</span></div>
+        <h3>三个模型的真实形状路线</h3>
+        <table class="summary-table">
+          <thead><tr><th>模型</th><th>Q</th><th>缓存前的 K/V 或 latent</th><th>注意力输入</th><th>输出</th></tr></thead>
+          <tbody>
+            <tr><td>MHA</td><td>[2,4,8,8]</td><td>K/V 各 [2,4,8,8]</td><td>q/k/v 均 [2,4,8,8]</td><td>[2,8,32]</td></tr>
+            <tr><td>GQA</td><td>[2,4,8,8]</td><td>K/V 各 [2,2,8,8]</td><td>repeat 后 [2,4,8,8]</td><td>[2,8,32]</td></tr>
+            <tr><td>ToyMLA</td><td>[2,4,8,8]</td><td>latent [2,8,8]</td><td>恢复 K/V 各 [2,4,8,8]</td><td>[2,8,32]</td></tr>
+          </tbody>
+        </table>
+        <div class="tip-box"><strong>形状相同 ≠ 算法等价</strong>脚本只断言输出与输入 shape 相同。三套参数独立随机初始化、没有训练，也没有从同一检查点转换，不能拿输出数值比较“谁更准确”。</div>
+        <p class="code-source-list">打开原始文件：<a href="../code/attention_variants_demo.py">attention_variants_demo.py</a></p>
+      </section>
+
+      <section id="syntax" class="lesson-section">
+        <p class="section-kicker">第 9 课 · Python / PyTorch 语法显微镜</p>
+        <h2>点一个符号，解释它在这两份代码中真正做什么</h2>
+        <div class="syntax-lab">
+          <div id="syntaxButtons" class="syntax-buttons"></div>
+          <div id="syntaxResult" class="syntax-result" aria-live="polite"></div>
+        </div>
+        <h3>四组最容易混淆的写法</h3>
+        <div class="concept-grid">
+          <div class="concept-card"><h3><code>model(x)</code> 与 <code>forward(x)</code></h3><p>通常调用前者。<code>nn.Module.__call__</code> 会处理 hooks、自动混合精度相关包装等，再进入 <code>forward</code>。</p></div>
+          <div class="concept-card"><h3><code>view</code> 与 <code>transpose</code></h3><p>view 重新解释形状；transpose 交换轴。交换后内存往往不连续，所以最后合并时源码用 <code>reshape</code>。</p></div>
+          <div class="concept-card"><h3><code>dim=-1</code></h3><p>永远表示最后一个轴，但最后轴的“业务含义”会变：scores 中是 Key 位置；router 概率中是专家。</p></div>
+          <div class="concept-card"><h3>类型注解与运行检查</h3><p><code>x: Tensor</code>、<code>-&gt; Tensor</code> 帮助阅读和工具，不会检查 <code>[B,H,T,D]</code>；shape 仍靠显式验证或测试。</p></div>
+        </div>
+      </section>
+
+      <section id="moe" class="lesson-section">
+        <p class="section-kicker">第 10 课 · 相邻扩展：Mixture of Experts</p>
+        <h2>注意力让 token 互相读；MoE 决定 token 去哪间 FFN</h2>
+        <div class="bridge-table">
+          <div class="bridge-card attn"><h3>MHA / GQA / MLA</h3><p>发生在注意力子层。输入一个 token 的 Query，读取序列中可见 token 的 K/V；KV Cache 属于这条路线。</p></div>
+          <div class="bridge-card moe"><h3>Top-K MoE</h3><p>通常替换 FFN 子层。router 对每个 token 选 K 个专家；专家本身不负责在 token 之间传递信息。</p></div>
+        </div>
+        <div class="formula-card">
+          p = softmax(router(x), dim=-1)<br>
+          weights, ids = p.topk(K, dim=-1) <span class="inline-note"># PyTorch 返回 (values, indices)</span><br>
+          gate = weights / weights.sum(dim=-1, keepdim=True)<br>
+          y = Σ gateᵢ × Expert[idsᵢ](x)
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 6：拖动 router logits，观察 Top-K 与重归一</h3><p>右侧专家输出使用明确标注的一维替身，只为了手算门控；源码中的专家输出是 8 维。</p></div><span class="lab-tag">ROUTER LAB</span></div>
+          <div class="router-layout">
+            <div class="router-controls">
+              <label>E0<input class="router-logit" type="range" min="-4" max="4" step="0.1" value="-0.4"><output>-0.4</output></label>
+              <label>E1<input class="router-logit" type="range" min="-4" max="4" step="0.1" value="0.6"><output>0.6</output></label>
+              <label>E2<input class="router-logit" type="range" min="-4" max="4" step="0.1" value="1.2"><output>1.2</output></label>
+              <label>E3<input class="router-logit" type="range" min="-4" max="4" step="0.1" value="-1.0"><output>-1.0</output></label>
+              <label>K<select id="routerTopK"><option value="1">Top-1</option><option value="2" selected>Top-2</option><option value="3">Top-3</option><option value="4">Top-4</option></select><span></span></label>
+            </div>
+            <div id="routerResult" class="router-result" aria-live="polite"></div>
+          </div>
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 7：回放脚本中 6 个 token 的真实路由</h3><p>概率是终端打印的两位小数；Top-2 来自未舍入的内部值。</p></div><span class="lab-tag">TRACE LAB</span></div>
+          <div id="tokenRouteButtons" class="token-route-buttons"></div>
+          <div id="routeProbabilities" class="route-probabilities"></div>
+          <div id="routeCaption" class="lab-output"></div>
+        </div>
+        <div class="lab">
+          <div class="lab-header"><div><h3>互动 8：均衡、实测与路由塌缩</h3><p>这里计算的是 Top-2 的 12 个“专家分配槽”占比，不是 6 个 token 中的独立比例。</p></div><span class="lab-tag">BALANCE LAB</span></div>
+          <div id="balanceTabs" class="balance-tabs">
+            <button type="button" data-balance="actual">脚本实测</button>
+            <button type="button" data-balance="balanced">完全均衡</button>
+            <button type="button" data-balance="collapse">路由塌缩</button>
+          </div>
+          <div id="balanceBars" class="balance-bars"></div>
+        </div>
+        <div class="mistake-box"><strong>最重要的代码审计</strong>脚本的 <code>balance_loss</code> 来自整数 <code>top_ids</code> 与 <code>bincount</code>，<code>requires_grad=False</code>。即使把它加进训练总 loss，也不能沿这条路径更新 router。它只能作为教学指标；真正训练需使用可微的负载均衡目标。</div>
+        <div class="tip-box"><strong>Top-1 的额外陷阱</strong>只保留一个概率后再除以自身，门控权重恒为 1；专家 ID 又是离散选择。若没有其他可微 router 损失，router 几乎收不到来自最终混合权重的训练信号。</div>
+      </section>
+
+      <section id="moe-code" class="lesson-section">
+        <p class="section-kicker">第 11 课 · moe_router_demo.py</p>
+        <h2>66 行代码，按 8 个职责块逐段读</h2>
+        <div id="moeBlockButtons" class="code-overview moe-overview" aria-label="MoE 源码块"></div>
+        <div class="source-explorer">
+          <div id="moeSource" class="source-code" aria-label="moe_router_demo.py 源码"></div>
+          <div id="moeExplain" class="explain-panel" aria-live="polite"></div>
+        </div>
+        <h3>完整张量形状</h3>
+        <table class="summary-table">
+          <thead><tr><th>变量</th><th>形状</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>x</code></td><td>[2,3,8]</td><td>2 个 batch，每个 3 个 token，每 token 8 维</td></tr>
+            <tr><td><code>flat</code></td><td>[6,8]</td><td>合并 B 与 T，顺序不打乱</td></tr>
+            <tr><td><code>probabilities</code></td><td>[6,4]</td><td>每 token 对 4 个专家的概率</td></tr>
+            <tr><td><code>top_weights/top_ids</code></td><td>[6,2]</td><td>每 token 的两个概率与两个专家编号</td></tr>
+            <tr><td><code>selected</code></td><td>[6]</td><td>当前专家收到哪些 token 的布尔掩码</td></tr>
+            <tr><td><code>weight</code></td><td>[n_e]</td><td>当前专家对收到的 n_e 个 token 的权重</td></tr>
+            <tr><td><code>output</code></td><td>[6,8] → [2,3,8]</td><td>专家贡献累加后恢复输入形状</td></tr>
+            <tr><td><code>load</code></td><td>[4]</td><td>4 个专家占 12 个分配槽的比例</td></tr>
+          </tbody>
+        </table>
+        <h3>两份代码的审计结论</h3>
+        <div class="audit-columns">
+          <div>
+            <div class="audit-heading">attention_variants_demo.py</div>
+            <div class="audit-stack">
+              <div class="audit-item critical"><span class="tag">明确缺失</span><h3>没有输出投影 W<sup>O</sup></h3><p>因此三个类都是核心数据流演示，不是完整注意力层。</p></div>
+              <div class="audit-item critical"><span class="tag">形状检查</span><h3>C % H 未验证</h3><p>非法配置会在 view 才报错；构造时显式 ValueError 更清楚。</p></div>
+              <div class="audit-item"><span class="tag">实现边界</span><h3>没有真实 cache / decode</h3><p>缓存元素只由公式估算，函数接口仍每次重算整段序列。</p></div>
+              <div class="audit-item"><span class="tag">性能边界</span><h3>GQA 物理复制 K/V</h3><p><code>repeat_interleave</code> 便于教学，不代表高效 kernel。</p></div>
+              <div class="audit-item"><span class="tag">模型边界</span><h3>ToyMLA 省略 RoPE 与矩阵吸收</h3><p>不能复现真实 MLA 缓存、速度或效果。</p></div>
+            </div>
+          </div>
+          <div>
+            <div class="audit-heading">moe_router_demo.py</div>
+            <div class="audit-stack">
+              <div class="audit-item critical"><span class="tag">训练缺陷</span><h3>均衡指标不可微</h3><p>硬 top_ids + bincount 无法给 router 梯度。</p></div>
+              <div class="audit-item critical"><span class="tag">参数边界</span><h3>没有校验 1≤K≤E</h3><p>K=0 会除零，K&gt;E 会使 topk 报错。</p></div>
+              <div class="audit-item"><span class="tag">系统边界</span><h3>无容量、丢弃和通信</h3><p>生产 MoE 还需 expert capacity、分布式派发与 all-to-all。</p></div>
+              <div class="audit-item"><span class="tag">性能边界</span><h3>Python if 导致 GPU 同步</h3><p><code>if selected.any()</code> 适合小例子，不适合高吞吐。</p></div>
+              <div class="audit-item"><span class="tag">解释边界</span><h3>随机路由没有语义</h3><p>固定种子只保证可复现；专家尚未训练，不能称为“数学专家”等。</p></div>
+            </div>
+          </div>
+        </div>
+        <h3>实际运行摘要</h3>
+        <div class="runtime-output"><span class="ok">$ C:\conda\envs\tf\python.exe code\moe_router_demo.py</span><br>
+output shape: (2, 3, 8)<br>
+Top-2: [2,1] [1,2] [0,1] [2,3] [2,3] [0,2]<br>
+专家负载比例: <span class="number">[0.167, 0.25, 0.417, 0.167]</span><br>
+教学版负载均衡损失: <span class="number">0.010417</span></div>
+        <p class="code-source-list">打开原始文件：<a href="../code/moe_router_demo.py">moe_router_demo.py</a></p>
+      </section>
+
+      <section id="review" class="lesson-section">
+        <p class="section-kicker">第 12 课 · 即时反馈</p>
+        <h2>先选答案，再看解释</h2>
+        <div class="code-quiz-grid">
+          <div class="quiz" data-answer="b" data-good="正确：Q 与 K 决定读取权重，真正按权重汇总的是 V。" data-try="回看公式最后一步：weights 与谁相乘？">
+            <h3>注意力权重最终加权哪一个量？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">Q</button><button class="choice-button" data-choice="b">V</button><button class="choice-button" data-choice="c">mask</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="c" data-good="正确：[B,H,T,D] × [B,H,D,T] 得 [B,H,T,T]。" data-try="只看最后两个矩阵轴：T×D 与 D×T。">
+            <h3>Q @ Kᵀ 的 shape 是？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">[B,T,C]</button><button class="choice-button" data-choice="b">[B,H,D,D]</button><button class="choice-button" data-choice="c">[B,H,T,T]</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="a" data-good="正确：G=1 时所有 Query 头共享一组 K/V，即 MQA。" data-try="想想共享程度最强的端点。">
+            <h3>GQA 的 G=1 等价于？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">MQA</button><button class="choice-button" data-choice="b">MHA</button><button class="choice-button" data-choice="c">MoE</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="b" data-good="正确：主要减少 K/V 投影、缓存与解码带宽；H 个 Query 头仍各自产生注意力分数。" data-try="共享的是 K/V，不是 Query 头本身。">
+            <h3>GQA 是否把 QK 点积直接变成 G/H？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">是</button><button class="choice-button" data-choice="b">不是</button><button class="choice-button" data-choice="c">只在训练</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="c" data-good="正确：真实 MLA 还缓存解耦 RoPE 的共享位置键分量。" data-try="ToyMLA 省略了哪一类位置相关状态？">
+            <h3>真实 MLA 的核心缓存口径是？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">2d_model</button><button class="choice-button" data-choice="b">只有 d_c</button><button class="choice-button" data-choice="c">d_c+d_h^R</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="a" data-good="正确：mask 决定可见性；位置编码表达位置，两者用途不同。" data-try="“不能看未来”和“知道相对距离”是同一件事吗？">
+            <h3>causal mask 是否等于位置编码？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">不等于</button><button class="choice-button" data-choice="b">完全等于</button><button class="choice-button" data-choice="c">只在 GQA 等于</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="b" data-good="正确：keepdim 保留 [N,1]，便于 [N,K] 按行广播相除。" data-try="如果变成 [N]，广播会从最右侧怎样对齐？">
+            <h3>MoE 重归一为何用 keepdim=True？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">增加专家</button><button class="choice-button" data-choice="b">保持广播轴</button><button class="choice-button" data-choice="c">打开梯度</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="c" data-good="正确：整数 top_ids 与 bincount 切断了到 router 的可微路径。" data-try="检查这个值是否来自连续概率，还是来自离散索引。">
+            <h3>脚本 balance_loss 能否直接训练 router？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">一定可以</button><button class="choice-button" data-choice="b">只在 CUDA</button><button class="choice-button" data-choice="c">不能</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="b" data-good="正确：ModuleList 使专家参数被 parameters/state_dict/device 管理。" data-try="普通 list 是否会自动向 nn.Module 登记内部对象？">
+            <h3>为何专家使用 nn.ModuleList？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">自动 softmax</button><button class="choice-button" data-choice="b">注册子模块</button><button class="choice-button" data-choice="c">自动分布式</button></div><p class="quiz-feedback"></p>
+          </div>
+          <div class="quiz" data-answer="a" data-good="正确：相同 shape 只说明接口对齐，不能证明数值、算法或质量等价。" data-try="assert 检查了什么，没检查什么？">
+            <h3>三个输出 shape 相同能证明什么？</h3><div class="quiz-options"><button class="choice-button" data-choice="a">只证明接口形状</button><button class="choice-button" data-choice="b">质量完全相同</button><button class="choice-button" data-choice="c">缓存已实现</button></div><p class="quiz-feedback"></p>
+          </div>
+        </div>
+
+        <h2>深入题：先自己说 30 秒，再展开</h2>
+        <div class="challenge"><h3>题 1：为什么 C=30、H=4 会在 MHA 的 view 处失败？</h3><p>用整数除法和元素总数解释。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">D=30//4=7，四个头只能容纳 4×7=28 个通道；但 q 实际仍有 30 个通道，元素总数对不上。构造时应先检查 <code>C % H == 0</code>。</div></div>
+        <div class="challenge"><h3>题 2：为什么 transpose 后常用 reshape，而不是直接 view？</h3><p>区分逻辑轴顺序与物理内存 stride。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">transpose 通常只改变 stride，不重排底层数据，张量可能非连续。view 需要兼容 stride；reshape 必要时会生成连续副本，因此在合并头时更稳。</div></div>
+        <div class="challenge"><h3>题 3：H=8、G=2 时，GQA 为什么仍有 8 张注意力权重图？</h3><p>共享 K 与 Query 是否相同是两回事。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">八个 Query 头都有不同 Q，因此即使四个 Q 头共享同一个 K/V 组，各自的 QKᵀ 分数和 softmax 权重仍不同。共享减少的是 K/V 的独立表示与缓存。</div></div>
+        <div class="challenge"><h3>题 4：为什么 ToyMLA 的两层线性映射构成低秩约束？</h3><p>中间 latent 维度是 r。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">没有激活时复合矩阵为 <code>W_restore @ W_compress</code>，其秩不超过中间维 r。r&lt;C 时，它不能表示任意 C→2C 线性映射，这正是压缩与表达约束的交换。</div></div>
+        <div class="challenge"><h3>题 5：为什么脚本的 causal_attention 不能直接用于增量 KV Cache？</h3><p>比较 Query 长度和 Key 历史长度。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">函数从 q 取一个 time，并创建 time×time 方阵，假设 q/k/v 等长。增量解码常为 Tq=1、Tk=历史长度+1；还需接收旧 cache、拼接新状态并返回更新后的 cache。</div></div>
+        <div class="challenge"><h3>题 6：Top-2 概率 [0.50,0.25] 为何要再归一化？</h3><p>先算和，再解释加权输出尺度。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">原和为 0.75；除以 0.75 后得到 2/3 与 1/3，入选专家贡献和为 1。若不重归一，丢弃专家的概率质量会让输出整体缩小，改变层的尺度。</div></div>
+        <div class="challenge"><h3>题 7：如何构造一个最小的可微教学版负载损失？</h3><p>不要从整数 top_ids 开始。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">可先用 <code>mean_probability = probabilities.mean(dim=0)</code>，再与均匀目标 <code>1/E</code> 做 MSE。它仍不是完整生产方案，但保留了从 loss 到 router 概率的梯度。</div></div>
+        <div class="challenge"><h3>题 8：为什么“MQA 最快、MHA 最强”不能当成无条件排名？</h3><p>至少列出四个控制变量。</p><button class="reveal-button" type="button">显示思路</button><div class="challenge-answer">速度受 batch、上下文、prefill/decode 比例、硬件带宽、并行策略与 kernel 影响；质量受参数规模、数据、训练预算、权重转换与评测任务影响。结构给出倾向，不给出跨场景的绝对名次。</div></div>
+      </section>
+
+      <section id="practice" class="lesson-section">
+        <p class="section-kicker">第 13 课 · 现在就运行</p>
+        <h2>先复现，再只改一个变量</h2>
+        <div class="command-card"><code><span class="prompt"># 在项目目录中</span>
+conda activate tf
+python code\attention_variants_demo.py
+python code\moe_router_demo.py
+
+<span class="prompt"># 若当前终端找不到 conda，可直接使用已核实的解释器</span>
+&amp; 'C:\conda\envs\tf\python.exe' '.\code\attention_variants_demo.py'
+&amp; 'C:\conda\envs\tf\python.exe' '.\code\moe_router_demo.py'</code></div>
+        <div class="experiment-grid">
+          <div class="experiment-card"><h3>实验 1：GQA 端点</h3><ol><li>把 <code>kv_heads</code> 改成 1，预测缓存。</li><li>再改成 4，预测缓存。</li><li>运行确认分别对应 MQA/MHA 端点。</li></ol></div>
+          <div class="experiment-card"><h3>实验 2：非法形状</h3><ol><li>把 <code>d_model</code> 改成 30。</li><li>先写下你预计在哪行失败。</li><li>再添加整除检查，让报错更早更清楚。</li></ol></div>
+          <div class="experiment-card"><h3>实验 3：latent 约束</h3><ol><li>把 latent 从 8 改为 4、16。</li><li>比较参数量和缓存元素。</li><li>不要从随机输出判断质量。</li></ol></div>
+          <div class="experiment-card"><h3>实验 4：Top-K</h3><ol><li>把 K 改为 1、4。</li><li>观察重归一权重与负载。</li><li>解释 K=1 时 router 梯度风险。</li></ol></div>
+          <div class="experiment-card"><h3>实验 5：验证梯度</h3><ol><li>令 <code>loss=y.pow(2).mean()</code>。</li><li>调用 <code>loss.backward()</code>。</li><li>检查 router 与专家的 <code>.grad</code>。</li></ol></div>
+          <div class="experiment-card"><h3>实验 6：补齐 W<sup>O</sup></h3><ol><li>构造 <code>nn.Linear(C,C,bias=False)</code>。</li><li>合并头后再投影。</li><li>比较新增参数量 C²。</li></ol></div>
+        </div>
+        <h3>推荐复习节奏</h3>
+        <div class="review-plan">
+          <div class="review-day"><strong>今天</strong><p>手算 3-token attention，跑两份脚本。</p></div>
+          <div class="review-day"><strong>明天</strong><p>不看答案画出 MHA/GQA 三条 shape。</p></div>
+          <div class="review-day"><strong>第 3 天</strong><p>重做缓存计算器与 10 道题。</p></div>
+          <div class="review-day"><strong>第 7 天</strong><p>口述 ToyMLA/MLA 与 MoE 边界。</p></div>
+        </div>
+
+        <h3>一手来源与本课依据</h3>
+        <ul class="source-list">
+          <li><a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a>：缩放点积注意力与 MHA。</li>
+          <li><a href="https://arxiv.org/abs/1911.02150">Fast Transformer Decoding: One Write-Head is All You Need</a>：MQA 与解码带宽动机。</li>
+          <li><a href="https://arxiv.org/abs/2305.13245">GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints</a>：GQA 定义与 MHA→MQA/GQA uptraining。</li>
+          <li><a href="https://arxiv.org/html/2405.04434v5">DeepSeek-V2</a>：MLA 的联合压缩、解耦 RoPE、缓存公式与矩阵吸收。</li>
+          <li><a href="https://arxiv.org/abs/2307.09288">Llama 2</a>：GQA 的具体型号与 KV 头设置背景。</li>
+          <li><a href="https://arxiv.org/abs/2310.06825">Mistral 7B</a>：GQA 在开源模型中的实例。</li>
+        </ul>
+        <p class="source-note">区分说明：论文能确认结构、公式与论文自身实验；“哪种机制在所有场景最好”没有单一事实答案。页面中的长上下文配置是教学示例，不冒充某个生产模型实测。</p>
+        <div class="lesson-actions">
+          <a href="../index.html">返回课程主页</a>
+          <a class="secondary" href="0003-self-attention-and-kv-cache.html">复习短课 3：注意力</a>
+          <a class="secondary" href="0004-moe-and-scaling.html">复习短课 4：MoE</a>
+          <a class="secondary" href="../reference/python-pytorch-code-reading-cheatsheet.html">Python / PyTorch 速查</a>
+        </div>
+      </section>
+    </article>
+  </main>
+  <script src="../assets/attention-deep-dive.js"></script>
+</body>
+</html>
